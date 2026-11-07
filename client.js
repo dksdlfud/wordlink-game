@@ -8,13 +8,20 @@
   const connectionLabel = $('#connection-label');
   const SESSION_KEY = 'wordlink.session.v1';
   const PLAYER_KEY = 'wordlink.playerId.v1';
+  const SOUND_KEY = 'wordlink.sound.v1';
+  const REACTIONS = ['👍', '😂', '😮', '🔥', '👏', '😭'];
+  const REACTION_COOLDOWN_MS = 350;
 
   const state = {
     socket: null,
     room: null,
     session: null,
     restoring: false,
-    toastTimer: null
+    toastTimer: null,
+    summaryClosedGame: null,
+    summaryShownGame: null,
+    lastTick: '',
+    lastReactionAt: 0
   };
 
   function escapeHtml(value) {
@@ -61,9 +68,23 @@
       });
     });
   }
-  function avatarClass(index) { return ['mint', 'blue', 'pink', 'gold'][index % 4]; }
-  function avatar(name, index, small = false) {
-    return `<span class="avatar ${avatarClass(index)} ${small ? 'small' : ''}">${escapeHtml((name || '?').slice(0, 1))}</span>`;
+  // 같은 닉네임은 어떤 방·어떤 기기에서도 같은 색이 나오도록 이름만으로 색을 정한다.
+  function hashName(name) {
+    let hash = 2166136261;
+    for (const char of String(name ?? '').normalize('NFC')) {
+      hash ^= char.codePointAt(0);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash >>> 0;
+  }
+  function avatarStyle(name) {
+    const hash = hashName(name);
+    const hue = (hash % 24) * 15;
+    const base = (hash >>> 8) & 1 ? 74 : 62;
+    return `--av-a:hsl(${hue},58%,${base + 6}%);--av-b:hsl(${hue},52%,${base - 12}%);--av-fg:hsl(${hue},45%,10%)`;
+  }
+  function avatar(name, small = false) {
+    return `<span class="avatar tinted ${small ? 'small' : ''}" style="${avatarStyle(name)}">${escapeHtml((name || '?').slice(0, 1))}</span>`;
   }
   function setConnection(connected) {
     connectionDot.className = connected ? 'online' : 'offline';
@@ -71,6 +92,185 @@
   }
   function setRoom(room) {
     state.room = room;
+    render();
+  }
+
+  // ---------- 효과음 (WebAudio로 직접 합성 — 별도 음원 파일 없음) ----------
+  const sound = (() => {
+    let ctx = null;
+    let enabled = true;
+    try { enabled = localStorage.getItem(SOUND_KEY) !== 'off'; } catch { /* 저장소를 못 쓰면 기본값(켜짐) */ }
+    const lastPlayed = {};
+    const PATTERNS = {
+      submit: [{ freq: 523, dur: .09 }, { freq: 784, at: .08, dur: .14 }],
+      word: [{ freq: 440, dur: .08, type: 'triangle', gain: .05 }],
+      turn: [{ freq: 659, dur: .1 }, { freq: 988, at: .11, dur: .18 }],
+      tick: [{ freq: 1320, dur: .05, type: 'square', gain: .025 }],
+      error: [{ freq: 180, dur: .16, type: 'square', gain: .04, to: 140 }],
+      eliminate: [{ freq: 392, dur: .35, type: 'sawtooth', gain: .04, to: 130 }],
+      out: [{ freq: 300, dur: .2, type: 'triangle', gain: .05, to: 200 }],
+      start: [{ freq: 440, dur: .1 }, { freq: 554, at: .1, dur: .1 }, { freq: 659, at: .2, dur: .2 }],
+      win: [523, 659, 784, 1047].map((freq, i) => ({ freq, at: i * .12, dur: i === 3 ? .5 : .14 })),
+      end: [{ freq: 392, dur: .18, type: 'triangle' }, { freq: 330, at: .18, dur: .18, type: 'triangle' }, { freq: 262, at: .36, dur: .4, type: 'triangle' }],
+      pop: [{ freq: 700, dur: .07, gain: .035, to: 1000 }],
+      toggle: [{ freq: 880, dur: .08, gain: .05 }]
+    };
+    function context() {
+      if (!ctx) {
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        if (!Ctor) return null;
+        try { ctx = new Ctor(); } catch { return null; }
+      }
+      return ctx;
+    }
+    // 브라우저 정책상 첫 사용자 입력 이후에야 소리를 낼 수 있다.
+    function unlock() {
+      const audio = context();
+      if (audio && audio.state === 'suspended') audio.resume().catch(() => {});
+    }
+    function tone(audio, { freq, at = 0, dur = .12, type = 'sine', gain = .07, to = null }) {
+      const start = audio.currentTime + at;
+      const osc = audio.createOscillator();
+      const amp = audio.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, start);
+      if (to) osc.frequency.exponentialRampToValueAtTime(to, start + dur);
+      amp.gain.setValueAtTime(0.0001, start);
+      amp.gain.exponentialRampToValueAtTime(gain, start + .012);
+      amp.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+      osc.connect(amp);
+      amp.connect(audio.destination);
+      osc.start(start);
+      osc.stop(start + dur + .03);
+    }
+    function play(name, delayMs = 0) {
+      if (!enabled || !PATTERNS[name]) return;
+      if (delayMs > 0) { setTimeout(() => play(name), delayMs); return; }
+      const audio = context();
+      if (!audio) return;
+      if (audio.state !== 'running') { unlock(); return; }
+      const now = performance.now();
+      if (now - (lastPlayed[name] ?? -Infinity) < 70) return;
+      lastPlayed[name] = now;
+      PATTERNS[name].forEach(note => tone(audio, note));
+    }
+    async function setEnabled(value) {
+      enabled = Boolean(value);
+      try { localStorage.setItem(SOUND_KEY, enabled ? 'on' : 'off'); } catch { /* 무시 */ }
+      if (enabled) {
+        const audio = context();
+        if (audio && audio.state === 'suspended') { try { await audio.resume(); } catch { /* 무시 */ } }
+        play('toggle');
+      }
+    }
+    ['pointerdown', 'keydown', 'touchend'].forEach(type => window.addEventListener(type, unlock, { passive: true }));
+    return { play, setEnabled, get enabled() { return enabled; } };
+  })();
+  function syncSoundButton() {
+    const button = $('#sound-toggle');
+    if (!button) return;
+    button.setAttribute('aria-pressed', String(sound.enabled));
+    button.setAttribute('aria-label', sound.enabled ? '효과음 켜짐 (누르면 끄기)' : '효과음 꺼짐 (누르면 켜기)');
+    const label = $('#sound-state');
+    if (label) label.textContent = sound.enabled ? 'ON' : 'OFF';
+  }
+
+  // 방 상태가 바뀔 때 이전/다음 스냅샷을 비교해 알맞은 효과음을 낸다.
+  function playRoomSounds(prev, next) {
+    if (!prev || !state.session || prev.code !== next.code) return;
+    const me = state.session.playerId;
+    if (prev.state !== 'playing' && next.state === 'playing') { sound.play('start'); return; }
+    if (prev.state === 'playing' && next.state === 'finished') { sound.play(next.winnerId && next.winnerId === me ? 'win' : 'end'); return; }
+    if (next.state !== 'playing') return;
+    const newWord = next.totalWords > prev.totalWords;
+    const lastWord = newWord ? next.words.filter(item => item.type === 'word').slice(-1)[0] : null;
+    const prevOut = new Set(prev.players.filter(player => player.eliminated).map(player => player.id));
+    const newlyOut = next.players.filter(player => player.eliminated && !prevOut.has(player.id));
+    const myTurnNow = next.currentPlayerId === me && prev.currentPlayerId !== me;
+    if (newlyOut.length) sound.play(newlyOut.some(player => player.id === me) ? 'eliminate' : 'out');
+    else if (lastWord && lastWord.playerId !== me) sound.play('word'); // 내 단어는 제출 응답에서 따로 재생
+    if (myTurnNow) sound.play('turn', newlyOut.length || (lastWord && lastWord.playerId !== me) ? 220 : 0);
+  }
+
+  // ---------- 이모지 반응 ----------
+  function showReaction(payload) {
+    const layer = $('#reaction-layer');
+    if (!layer || !payload || !REACTIONS.includes(payload.emoji)) return;
+    sound.play('pop');
+    if (document.hidden) return;
+    while (layer.children.length >= 30) layer.firstChild.remove();
+    const node = document.createElement('div');
+    node.className = `reaction-float${state.session && payload.playerId === state.session.playerId ? ' mine' : ''}`;
+    node.style.left = `${8 + Math.random() * 84}%`;
+    node.style.setProperty('--drift', `${Math.round((Math.random() - .5) * 70)}px`);
+    const emoji = document.createElement('span');
+    emoji.className = 'reaction-emoji';
+    emoji.textContent = payload.emoji;
+    const name = document.createElement('span');
+    name.className = 'reaction-name';
+    name.textContent = String(payload.name ?? '');
+    name.style.cssText = avatarStyle(payload.name);
+    node.append(emoji, name);
+    layer.append(node);
+    node.addEventListener('animationend', () => node.remove());
+    setTimeout(() => node.remove(), 3200);
+  }
+  async function sendReaction(emoji) {
+    if (!state.room || !state.session || !REACTIONS.includes(emoji)) return;
+    const now = Date.now();
+    if (now - state.lastReactionAt < REACTION_COOLDOWN_MS) return;
+    state.lastReactionAt = now;
+    const result = await request('game:react', { code: state.room.code, playerId: state.session.playerId, emoji });
+    if (!result.ok && !result.throttled) showToast(result.message, 'error');
+  }
+
+  // ---------- 라운드 결과 요약 ----------
+  function formatDuration(ms) {
+    const total = Math.max(0, Math.round(ms / 1000));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return minutes ? `${minutes}분 ${String(seconds).padStart(2, '0')}초` : `${seconds}초`;
+  }
+  function summaryMarkup(room, isHost, animate) {
+    const summary = room.summary;
+    if (!summary) return '';
+    const me = state.session.playerId;
+    const winner = summary.ranking.find(row => row.isWinner);
+    const tiles = [
+      ['총 단어', `${summary.totalWords}개`, ''],
+      ['가장 긴 단어', summary.longestWord ? escapeHtml(summary.longestWord.word) : '—', summary.longestWord ? escapeHtml(summary.longestWord.playerName) : ''],
+      ['가장 빠른 입력', summary.fastestWord ? `${(summary.fastestWord.elapsedMs / 1000).toFixed(1)}초` : '—', summary.fastestWord ? `${escapeHtml(summary.fastestWord.word)} · ${escapeHtml(summary.fastestWord.playerName)}` : ''],
+      ['플레이 시간', summary.durationMs == null ? '—' : formatDuration(summary.durationMs), '']
+    ].map(([label, value, note]) => `<div class="summary-stat"><small>${label}</small><strong>${value}</strong>${note ? `<span>${note}</span>` : ''}</div>`).join('');
+    const rows = summary.ranking.map(row => {
+      const status = row.isWinner ? '최후의 생존자' : row.eliminated ? '탈락' : '생존';
+      const detail = `${status} · 단어 ${row.wordCount}개${row.longestWord ? ` · 최장 ${escapeHtml(row.longestWord)}` : ''}`;
+      return `<li class="summary-row ${row.isWinner ? 'winner' : ''}">
+        <span class="summary-rank">${row.rank}</span>
+        ${avatar(row.name, true)}
+        <div class="summary-name">${escapeHtml(row.name)}${row.id === me ? '<em class="summary-me">나</em>' : ''}${row.isWinner ? ' 🏆' : ''}<small>${detail}</small></div>
+        <span class="summary-score">${row.score}<small>점</small></span>
+      </li>`;
+    }).join('');
+    return `
+      <div id="summary-backdrop" class="summary-backdrop ${animate ? 'enter' : ''}" role="dialog" aria-modal="true" aria-labelledby="summary-title">
+        <div class="summary-card" tabindex="-1">
+          <button id="summary-close" class="summary-close" type="button" aria-label="결과 요약 닫기">✕</button>
+          <div class="summary-kicker">ROUND RESULT</div>
+          <h2 id="summary-title" class="summary-title">${winner ? `${escapeHtml(winner.name)} 승리!` : '게임 종료'}</h2>
+          <p class="summary-sub">${winner ? '마지막까지 살아남은 플레이어예요.' : '이번 판의 결과를 확인해 보세요.'}</p>
+          <div class="summary-stats">${tiles}</div>
+          <ol class="summary-ranking">${rows}</ol>
+          <div class="summary-actions">
+            <button id="summary-dismiss" class="ghost-button" type="button">닫기</button>
+            ${isHost ? '<button id="summary-rematch" class="primary-button" type="button">다시 플레이 ↗</button>' : '<span class="summary-wait">방장이 다시 시작할 수 있어요</span>'}
+          </div>
+        </div>
+      </div>`;
+  }
+  function closeSummary() {
+    if (!state.room) return;
+    state.summaryClosedGame = state.room.gameId;
     render();
   }
 
@@ -99,14 +299,19 @@
   socket.on('disconnect', () => setConnection(false));
   socket.on('connect_error', () => setConnection(false));
   socket.on('room:update', room => {
-    if (state.session && room.code === state.session.code) setRoom(room);
+    if (state.session && room.code === state.session.code) {
+      playRoomSounds(state.room, room);
+      setRoom(room);
+    }
   });
+  socket.on('game:reaction', showReaction);
   socket.on('notice', payload => showToast(payload.message || '알 수 없는 오류가 발생했어요.', payload.type || 'info'));
   socket.on('server:hello', payload => {
     document.documentElement.dataset.dictionarySize = String(payload.dictionarySize || 0);
   });
 
   function renderHome() {
+    document.body.classList.remove('modal-open');
     const queryCode = new URLSearchParams(location.search).get('room') || '';
     app.innerHTML = `
       <section class="home-layout fade-in">
@@ -201,12 +406,13 @@
   }
 
   function renderLobby(room) {
+    document.body.classList.remove('modal-open');
     const mine = room.players.find(player => player.id === state.session.playerId);
     const isHost = room.hostId === state.session.playerId;
     const allReady = room.players.length >= 2 && room.players.every(player => player.online && player.ready);
-    const playerRows = room.players.map((player, index) => `
+    const playerRows = room.players.map(player => `
       <div class="player-row">
-        ${avatar(player.name, index)}
+        ${avatar(player.name)}
         <div class="player-info">
           <div class="player-name">${escapeHtml(player.name)} ${player.isHost ? '<span class="host-label">HOST</span>' : ''}</div>
           <div class="player-meta">${player.online ? '온라인 · 참가 중' : '연결 끊김'}</div>
@@ -300,24 +506,28 @@
     const wordCount = room.words.filter(item => item.type === 'word').length;
     const sortedPlayers = [...room.players].sort((a, b) => Number(a.eliminated) - Number(b.eliminated) || b.score - a.score);
     const scoreRows = sortedPlayers.map(player => {
-      const originalIndex = room.players.findIndex(item => item.id === player.id);
       const current = player.id === room.currentPlayerId;
       const status = player.eliminated ? '탈락' : !player.online ? '연결 끊김' : current ? '현재 차례' : '플레이 중';
       return `<div class="score-row ${current ? 'current' : ''} ${player.eliminated ? 'eliminated' : ''}">
-        ${avatar(player.name, originalIndex, true)}
+        ${avatar(player.name, true)}
         <div class="score-name">${escapeHtml(player.name)}<span class="score-state">${status}</span></div>
         <span class="score-points">${player.score}</span>
       </div>`;
     }).join('');
     const history = room.words.slice().reverse().map((item, reverseIndex) => {
       if (item.type === 'system') return `<div class="history-system">${escapeHtml(item.text)}</div>`;
-      return `<div class="history-item"><span class="history-index">${String(room.words.filter(entry => entry.type === 'word').indexOf(item) + 1).padStart(2, '0')}</span><span class="history-word">${escapeHtml(item.word)}</span><span class="history-player">${escapeHtml(item.playerName)}</span><span class="history-points">+${item.points}</span></div>`;
+      return `<div class="history-item"><span class="history-index">${String(room.words.filter(entry => entry.type === 'word').indexOf(item) + 1).padStart(2, '0')}</span>${avatar(item.playerName, true)}<span class="history-word">${escapeHtml(item.word)}</span><span class="history-player">${escapeHtml(item.playerName)}</span><span class="history-points">+${item.points}</span></div>`;
     }).join('');
     const finished = room.state === 'finished';
     const winnerContent = finished ? `<div class="finished-banner"><div class="trophy">🏆</div><h2>${room.winnerName ? `${escapeHtml(room.winnerName)} 승리!` : '게임 종료'}</h2><p>${room.winnerName ? '마지막까지 살아남았어요.' : '결과를 확인해 주세요.'}</p></div>` : '';
     const turnName = isPlaying ? (myTurn ? '내 차례예요!' : `${escapeHtml(room.currentPlayerName)}님의 차례`) : '게임이 종료되었어요';
     const turnHint = myTurn ? (room.lastSyllable ? `‘${escapeHtml(room.lastSyllable)}’(으)로 시작하는 단어를 입력하세요.` : '첫 단어를 자유롭게 입력해 보세요.') : '차례가 돌아올 때까지 친구들의 단어를 확인해 보세요.';
     const chain = room.words.filter(item => item.type === 'word').slice(-1)[0];
+    const showSummary = finished && Boolean(room.summary) && state.summaryClosedGame !== room.gameId;
+    const firstShow = showSummary && state.summaryShownGame !== room.gameId;
+    if (showSummary) state.summaryShownGame = room.gameId;
+    const summaryHtml = showSummary ? summaryMarkup(room, isHost, firstShow) : '';
+    const reactionBar = `<section class="reaction-bar" aria-label="이모지 반응"><span class="reaction-label">REACT</span><div class="reaction-buttons">${REACTIONS.map(emoji => `<button type="button" class="reaction-button" data-emoji="${emoji}" aria-label="${emoji} 반응 보내기">${emoji}</button>`).join('')}</div></section>`;
     app.innerHTML = `
       <section class="fade-in">
         <div class="game-topline"><span class="game-tag">LIVE WORD BATTLE</span><span class="game-code">ROOM ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존 <span class="footer-dot">·</span> ${wordCount}개 단어</span></div>
@@ -340,6 +550,7 @@
               </form>
               <div class="entry-help"><span>${myTurn ? '<strong>ENTER</strong> 키로 빠르게 제출할 수 있어요.' : '순서가 되면 입력창이 활성화돼요.'}</span><span>중복 단어 사용 불가</span></div>
             </section>
+            ${reactionBar}
             <section class="panel history-panel">
               <div class="panel-header"><span class="panel-title">단어 기록</span><span class="panel-caption">${wordCount} WORDS</span></div>
               <div id="history-list" class="history-list">${history || '<div class="history-empty">아직 입력된 단어가 없어요.<br>첫 번째 단어의 주인공이 되어 보세요!</div>'}</div>
@@ -351,15 +562,26 @@
           </aside>
         </div>
         <div class="game-bottom-actions">
+          ${finished && room.summary ? '<button id="open-summary" class="secondary-button">결과 요약 보기</button>' : ''}
           ${finished && isHost ? '<button id="rematch" class="primary-button">다시 플레이 ↗</button>' : finished ? '<button class="secondary-button" disabled>방장이 다시 시작할 수 있어요</button>' : ''}
           <button id="leave-room" class="ghost-button danger-button">방 나가기</button>
           <button id="copy-invite" class="ghost-button">초대 링크 복사</button>
         </div>
-      </section>`;
+      </section>${summaryHtml}`;
+    document.body.classList.toggle('modal-open', showSummary);
     $('#word-form').addEventListener('submit', submitWord);
     $('#leave-room').addEventListener('click', leaveRoom);
     $('#copy-invite').addEventListener('click', copyInvite);
     if ($('#rematch')) $('#rematch').addEventListener('click', rematch);
+    app.querySelectorAll('.reaction-button').forEach(button => button.addEventListener('click', () => sendReaction(button.dataset.emoji)));
+    if ($('#open-summary')) $('#open-summary').addEventListener('click', () => { state.summaryClosedGame = null; state.summaryShownGame = null; render(); });
+    if (showSummary) {
+      $('#summary-close').addEventListener('click', closeSummary);
+      $('#summary-dismiss').addEventListener('click', closeSummary);
+      $('#summary-backdrop').addEventListener('click', event => { if (event.target.id === 'summary-backdrop') closeSummary(); });
+      if ($('#summary-rematch')) $('#summary-rematch').addEventListener('click', rematch);
+      if (firstShow) $('.summary-card')?.focus({ preventScroll: true });
+    }
     const input = $('#word-input');
     if (myTurn && input) input.focus({ preventScroll: true });
     updateClock();
@@ -375,10 +597,12 @@
     button.disabled = true;
     const result = await request('game:submit', { code: state.room.code, playerId: state.session.playerId, word });
     if (!result.ok) {
+      sound.play('error');
       showToast(result.message, 'error');
       if (input) { input.value = ''; input.focus(); }
       if (button) button.disabled = false;
     } else {
+      sound.play('submit');
       showToast(`‘${result.word}’ 제출 완료 · +${result.points}점`, 'success');
     }
   }
@@ -399,6 +623,10 @@
     number.textContent = String(seconds);
     fill.style.width = `${Math.max(0, Math.min(100, remaining / duration * 100))}%`;
     fill.classList.toggle('low', seconds <= 5);
+    if (state.session && room.currentPlayerId === state.session.playerId && seconds > 0 && seconds <= 3) {
+      const key = `${room.turnEndsAt}:${seconds}`;
+      if (state.lastTick !== key) { state.lastTick = key; sound.play('tick'); }
+    }
   }
 
   function render() {
@@ -406,6 +634,13 @@
     if (state.room.state === 'lobby') renderLobby(state.room);
     else renderGame(state.room);
   }
+
+  const soundButton = $('#sound-toggle');
+  if (soundButton) soundButton.addEventListener('click', async () => { await sound.setEnabled(!sound.enabled); syncSoundButton(); });
+  syncSoundButton();
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && document.body.classList.contains('modal-open')) closeSummary();
+  });
 
   setInterval(updateClock, 180);
   setConnection(false);
