@@ -4,9 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeWord, validateWord } = require('../src/game-rules');
+const { normalizeWord, validateWord } = require('./game-rules');
 
-const words = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'words.json'), 'utf8'));
+const words = JSON.parse(fs.readFileSync(path.join(__dirname, 'words.json'), 'utf8'));
 const dictionary = new Set(words.map(normalizeWord));
 
 test('normalizes composed Hangul and whitespace', () => {
@@ -49,7 +49,6 @@ test('rejects non-Hangul and invalid length', () => {
 test('starter dictionary has no duplicate entries', () => {
   assert.equal(words.length, dictionary.size);
 });
-
 
 test('every starter dictionary entry is a supported Hangul word', () => {
   assert.ok(words.every(word => /^[가-힣]{2,12}$/u.test(word)));

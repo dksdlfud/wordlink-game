@@ -7,23 +7,27 @@ const { randomUUID } = require('node:crypto');
 const { Server } = require('socket.io');
 const { validateWord, normalizeWord } = require('./game-rules');
 
-const ROOT = path.resolve(__dirname, '..');
-const PUBLIC = path.join(ROOT, 'public');
+// The GitHub upload currently has a flattened layout: all app files live at the repository root.
+const ROOT = __dirname;
+const PUBLIC = ROOT;
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_ROOMS = 500;
 const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-const rawWords = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'words.json'), 'utf8'));
+const rawWords = JSON.parse(fs.readFileSync(path.join(ROOT, 'words.json'), 'utf8'));
 const dictionary = new Set(rawWords.map(normalizeWord));
+
+const publicFiles = new Set(['/index.html', '/styles.css', '/client.js']);
 
 const server = http.createServer((req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;
   const requested = pathname === '/' ? '/index.html' : pathname;
-  const filePath = path.resolve(PUBLIC, `.${requested}`);
-  if (!filePath.startsWith(PUBLIC + path.sep) && filePath !== path.join(PUBLIC, 'index.html')) {
-    res.writeHead(403); res.end('Forbidden'); return;
+  // Only expose browser assets. Keep server code, package files and the dictionary private.
+  if (!publicFiles.has(requested)) {
+    res.writeHead(404); res.end('Not found'); return;
   }
+  const filePath = path.join(PUBLIC, requested.slice(1));
   fs.readFile(filePath, (error, data) => {
     if (error) { res.writeHead(404); res.end('Not found'); return; }
     const ext = path.extname(filePath);
