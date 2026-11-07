@@ -1,0 +1,20 @@
+{
+  "name": "wordlink-game",
+  "version": "0.1.0",
+  "private": true,
+  "description": "친구와 실시간으로 즐기는 한국어 끝말잇기 웹게임",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "check": "node --check src/server.js && node --check src/game-rules.js && node --check public/client.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.4"
+  }
+}

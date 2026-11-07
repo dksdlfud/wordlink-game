@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: wordlink-game
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 26.13.0
