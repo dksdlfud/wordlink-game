@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { Server } = require('socket.io');
-const { validateWord, normalizeWord, buildRoundSummary, REACTION_EMOJIS } = require('./game-rules');
+const { validateWord, normalizeWord } = require('./game-rules');
 
 // The GitHub upload currently has a flattened layout: all app files live at the repository root.
 const ROOT = __dirname;
@@ -13,7 +13,6 @@ const PUBLIC = ROOT;
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_ROOMS = 500;
-const REACTION_COOLDOWN_MS = 350;
 const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 const rawWords = JSON.parse(fs.readFileSync(path.join(ROOT, 'words.json'), 'utf8'));
@@ -102,11 +101,8 @@ function roomSnapshot(room) {
     currentPlayerName: current ? current.name : '',
     turnEndsAt: room.turnEndsAt,
     turnCount: room.turnCount,
-    gameId: room.gameId,
     lastSyllable: room.lastSyllable,
-    totalWords: room.totalWords,
     words: room.words.slice(-80),
-    summary: room.state === 'finished' ? room.summary : null,
     winnerId: room.winnerId,
     winnerName: room.winnerId && getPlayer(room, room.winnerId) ? getPlayer(room, room.winnerId).name : ''
   };
@@ -120,9 +116,7 @@ function finishGame(room) {
   const remaining = activePlayers(room);
   room.winnerId = remaining.length === 1 ? remaining[0].id : null;
   room.currentPlayerId = null;
-  const endedAt = Date.now();
-  room.words.push({ type: 'system', text: room.winnerId ? `${remaining[0].name}님이 최종 승리했습니다.` : '게임이 종료되었습니다.', at: endedAt });
-  room.summary = buildRoundSummary({ players: orderedPlayers(room), words: room.allWords, winnerId: room.winnerId, startedAt: room.startedAt, endedAt });
+  room.words.push({ type: 'system', text: room.winnerId ? `${remaining[0].name}님이 최종 승리했습니다.` : '게임이 종료되었습니다.', at: Date.now() });
   broadcast(room);
   if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
   room.cleanupTimer = setTimeout(() => {
@@ -146,8 +140,7 @@ function startTurn(room, index) {
   clearTurnTimer(room);
   room.turnIndex = index;
   room.currentPlayerId = playerId;
-  room.turnStartedAt = Date.now();
-  room.turnEndsAt = room.turnStartedAt + room.settings.turnSeconds * 1000;
+  room.turnEndsAt = Date.now() + room.settings.turnSeconds * 1000;
   const token = room.turnToken;
   const timer = setTimeout(() => {
     if (rooms.get(room.code) !== room || room.state !== 'playing' || room.turnToken !== token || room.currentPlayerId !== playerId) return;
@@ -186,13 +179,6 @@ function createRoomObject(code, host) {
     turnEndsAt: null,
     turnCount: 0,
     turnToken: 0,
-    turnStartedAt: null,
-    gameId: 0,
-    startedAt: null,
-    totalWords: 0,
-    allWords: [],
-    summary: null,
-    lastReactionAt: new Map(),
     winnerId: null,
     createdAt: now,
     cleanupTimer: null
@@ -205,20 +191,6 @@ function attachPlayer(room, player, socket) {
   socket.data.roomCode = room.code;
   socket.join(roomChannel(room.code));
   broadcast(room);
-}
-function resetGame(room, players) {
-  room.state = 'playing';
-  room.words = [];
-  room.allWords = [];
-  room.totalWords = 0;
-  room.summary = null;
-  room.gameId += 1;
-  room.startedAt = Date.now();
-  room.usedWords.clear();
-  room.lastSyllable = '';
-  room.turnCount = 1;
-  room.winnerId = null;
-  players.forEach(item => { item.score = 0; item.eliminated = false; });
 }
 function findRoomPlayer(playerId, code) {
   const room = rooms.get(code);
@@ -325,7 +297,13 @@ io.on('connection', socket => {
     if (room.state !== 'lobby') return sendAck(callback, { ok: false, message: '이미 게임이 진행 중이에요.' });
     if (players.length < 2) return sendAck(callback, { ok: false, message: '친구가 한 명 이상 참가해야 시작할 수 있어요.' });
     if (players.some(item => !item.online || !item.ready)) return sendAck(callback, { ok: false, message: '모든 플레이어가 접속하고 준비를 마쳐야 해요.' });
-    resetGame(room, players);
+    room.state = 'playing';
+    room.words = [];
+    room.usedWords.clear();
+    room.lastSyllable = '';
+    room.turnCount = 1;
+    room.winnerId = null;
+    players.forEach(item => { item.score = 0; item.eliminated = false; });
     startTurn(room, 0);
     broadcast(room);
     sendAck(callback, { ok: true });
@@ -346,11 +324,7 @@ io.on('connection', socket => {
     room.usedWords.add(word);
     room.lastSyllable = word[word.length - 1];
     player.score += word.length * 10;
-    const submittedAt = Date.now();
-    const entry = { type: 'word', word, playerId: player.id, playerName: player.name, points: word.length * 10, elapsedMs: Math.max(0, submittedAt - (room.turnStartedAt ?? submittedAt)), at: submittedAt };
-    room.words.push(entry);
-    room.allWords.push(entry);
-    room.totalWords += 1;
+    room.words.push({ type: 'word', word, playerId: player.id, playerName: player.name, points: word.length * 10, at: Date.now() });
     const next = findNextActiveIndex(room, room.turnIndex);
     if (next < 0 || activePlayers(room).length <= 1) {
       finishGame(room);
@@ -372,25 +346,15 @@ io.on('connection', socket => {
     if (players.length < 2 || players.some(item => !item.online)) return sendAck(callback, { ok: false, message: '모든 친구가 다시 접속해야 시작할 수 있어요.' });
     clearTurnTimer(room);
     if (room.cleanupTimer) { clearTimeout(room.cleanupTimer); room.cleanupTimer = null; }
-    resetGame(room, players);
-    players.forEach(item => { item.ready = true; });
+    room.state = 'playing';
+    room.words = [];
+    room.usedWords.clear();
+    room.lastSyllable = '';
+    room.turnCount = 1;
+    room.winnerId = null;
+    players.forEach(item => { item.score = 0; item.eliminated = false; item.ready = true; });
     startTurn(room, 0);
     broadcast(room);
-    sendAck(callback, { ok: true });
-  });
-
-  socket.on('game:react', (payload = {}, callback) => {
-    const code = safeCode(payload.code);
-    const room = rooms.get(code);
-    const player = room && playerForSocket(room, String(payload.playerId ?? ''), socket);
-    if (!room || !player) return sendAck(callback, { ok: false, message: '방에 연결되어 있지 않아요.' });
-    if (room.state === 'lobby') return sendAck(callback, { ok: false, message: '게임이 시작된 뒤에 반응을 보낼 수 있어요.' });
-    const emoji = String(payload.emoji ?? '');
-    if (!REACTION_EMOJIS.includes(emoji)) return sendAck(callback, { ok: false, message: '지원하지 않는 반응이에요.' });
-    const now = Date.now();
-    if (now - (room.lastReactionAt.get(player.id) ?? 0) < REACTION_COOLDOWN_MS) return sendAck(callback, { ok: false, throttled: true, message: '반응을 너무 빠르게 보내고 있어요.' });
-    room.lastReactionAt.set(player.id, now);
-    io.to(roomChannel(code)).emit('game:reaction', { emoji, playerId: player.id, name: player.name });
     sendAck(callback, { ok: true });
   });
 
