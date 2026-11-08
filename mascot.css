@@ -1,0 +1,212 @@
+/* =====================================================================
+   🐶 복구 — 끝말잇기 도우미 강아지
+   mascot.js 와 짝을 이루는 스타일입니다. 이 파일과 mascot.js 를 index.html 에서
+   빼면 복구가 통째로 사라집니다. (게임 로직은 복구에 의존하지 않습니다.)
+   ===================================================================== */
+.bokgu, .bk-call {
+  --bk-ink: #6b4423;
+  --bk-panel: var(--panel, #fffaf0);
+  --bk-text: var(--text, #3b2a14);
+  --bk-muted: var(--muted, #7d6746);
+  --bk-orange: #e8761a;
+  --bk-line: #efe0bd;
+  --bk-edge: max(14px, env(safe-area-inset-right, 0px));
+  --bk-edge-left: max(14px, env(safe-area-inset-left, 0px));
+  --bk-bottom: max(14px, env(safe-area-inset-bottom, 0px));
+  font-family: 'Noto Sans KR', 'DM Sans', sans-serif;
+}
+
+.bokgu {
+  position: fixed; right: var(--bk-edge); bottom: var(--bk-bottom); z-index: 25;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  pointer-events: none; /* 투명한 빈 공간이 아래 화면의 클릭을 막지 않도록 */
+}
+.bokgu > * { pointer-events: auto; }
+.bokgu.left { right: auto; left: var(--bk-edge-left); align-items: flex-start; }
+.bokgu[hidden], .bk-call[hidden], .bk-bubble[hidden], .bk-menu[hidden] { display: none; }
+
+/* ── 말풍선 ── */
+.bk-bubble {
+  position: relative; max-width: min(264px, calc(100vw - 40px));
+  padding: 10px 30px 12px 14px;
+  color: var(--bk-text); background: var(--bk-panel);
+  border: 3px solid #fff; border-radius: 18px;
+  box-shadow: 0 4px 0 rgba(60, 100, 30, .2), 0 12px 24px rgba(40, 80, 20, .22);
+  font-size: 14px; font-weight: 600; line-height: 1.55;
+  word-break: keep-all; overflow-wrap: anywhere;
+  transform-origin: 82% 100%;
+}
+.bokgu.left .bk-bubble { transform-origin: 18% 100%; }
+.bk-bubble.in { animation: bk-pop .32s cubic-bezier(.3, 1.5, .5, 1) both; }
+.bk-bubble.out { animation: bk-pop-out .16s ease-in both; }
+.bk-bubble::after {
+  content: ''; position: absolute; bottom: -9px; right: 36px; width: 14px; height: 14px;
+  background: var(--bk-panel); border-right: 3px solid #fff; border-bottom: 3px solid #fff;
+  border-radius: 0 0 5px 0; transform: rotate(45deg);
+}
+.bokgu.left .bk-bubble::after { right: auto; left: 36px; }
+.bk-name {
+  display: inline-block; margin-bottom: 3px; padding: 0 8px; border-radius: 999px;
+  background: var(--bk-orange); color: #fff;
+  font: 400 11px/1.7 'Jua', 'Noto Sans KR', sans-serif; letter-spacing: .04em;
+}
+.bk-text { margin: 0; }
+.bk-x {
+  position: absolute; top: 5px; right: 5px; width: 22px; height: 22px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent; color: #9b8564;
+  font-size: 16px; line-height: 1; cursor: pointer;
+}
+.bk-x:hover { background: rgba(110, 70, 20, .12); color: var(--bk-text); }
+.bk-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.bk-actions:empty { display: none; }
+.bk-chip {
+  padding: 4px 11px; border: 2px solid #e4d3ae; border-radius: 999px;
+  background: #fff; color: #6a5230; font: 700 12px 'Noto Sans KR', sans-serif; cursor: pointer;
+  transition: background .15s, border-color .15s, transform .1s;
+}
+.bk-chip:hover { border-color: #f0a030; background: #fff3d6; }
+.bk-chip:active { transform: scale(.96); }
+.bk-chip.primary { border-color: #c96a0f; background: #ff9a2e; color: #fff; }
+.bk-chip.primary:hover { background: #ffa845; }
+.bk-chip[aria-pressed="true"] { border-color: #2f8f3a; background: #e6f6dc; color: #1f6d29; }
+
+/* ── 도움말 메뉴 ── */
+.bk-menu {
+  width: min(318px, calc(100vw - 28px)); max-height: min(72vh, 500px);
+  display: flex; flex-direction: column; overflow: hidden;
+  color: var(--bk-text); background: var(--bk-panel);
+  border: 4px solid #fff; border-radius: 22px;
+  box-shadow: 0 6px 0 rgba(60, 100, 30, .2), 0 16px 32px rgba(40, 80, 20, .26);
+  transform-origin: 82% 100%;
+  animation: bk-pop .3s cubic-bezier(.3, 1.4, .5, 1) both;
+}
+.bokgu.left .bk-menu { transform-origin: 18% 100%; }
+.bk-menu-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 8px 6px 16px; }
+.bk-menu-title { flex: 1; margin: 0; font: 400 18px 'Jua', 'Noto Sans KR', sans-serif; }
+.bk-menu-close {
+  width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: #9b8564; font-size: 18px; line-height: 1; cursor: pointer;
+}
+.bk-menu-close:hover { background: rgba(110, 70, 20, .12); }
+.bk-menu-body { flex: 1; min-height: 0; padding: 0 12px 8px; overflow-y: auto; scrollbar-width: thin; }
+.bk-hello { margin: 0 0 8px; padding: 0 4px; color: var(--bk-muted); font-size: 13px; }
+.bk-topic {
+  display: flex; align-items: center; gap: 10px; width: 100%; margin: 0 0 6px; padding: 9px 11px;
+  border: 2px solid var(--bk-line); border-radius: 14px; background: #fff; color: inherit;
+  font: 600 14px 'Noto Sans KR', sans-serif; text-align: left; cursor: pointer;
+  transition: border-color .15s, background .15s, transform .1s;
+}
+.bk-topic:hover, .bk-topic:focus-visible { border-color: #f0a030; background: #fff8e6; }
+.bk-topic:active { transform: scale(.985); }
+.bk-topic .ic { flex: none; width: 24px; font-size: 18px; text-align: center; }
+.bk-detail { padding: 2px 4px 4px; }
+.bk-detail h3 { margin: 0 0 6px; font: 400 17px 'Jua', 'Noto Sans KR', sans-serif; }
+.bk-detail p, .bk-detail li { font-size: 13.5px; line-height: 1.65; word-break: keep-all; }
+.bk-detail p { margin: 0 0 8px; }
+.bk-detail ul { margin: 0 0 8px; padding-left: 18px; }
+.bk-detail .eg { margin: 0 0 8px; padding: 7px 10px; border-radius: 10px; background: #fff3d6; font-size: 13px; line-height: 1.6; }
+.bk-back {
+  margin: 0 0 8px; padding: 4px 10px; border: 2px solid #e4d3ae; border-radius: 999px;
+  background: #fff; color: #6a5230; font: 700 12px 'Noto Sans KR', sans-serif; cursor: pointer;
+}
+.bk-back:hover { border-color: #f0a030; background: #fff3d6; }
+.bk-menu-foot {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 9px 12px 12px; border-top: 2px dashed rgba(110, 70, 20, .18);
+}
+.bk-note { flex-basis: 100%; min-height: 1.4em; margin: 0 2px 2px; color: var(--bk-muted); font-size: 12px; }
+
+/* ── 강아지 ── */
+.bk-dog {
+  position: relative; width: 92px; height: 100px; padding: 0; border: 0; background: transparent;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  filter: drop-shadow(0 3px 0 rgba(40, 80, 20, .28));
+  transition: transform .2s cubic-bezier(.3, 1.5, .5, 1);
+}
+.bk-dog:hover { transform: translateY(-3px) scale(1.05); }
+.bk-dog:active { transform: scale(.96); }
+.bk-dog:focus-visible { outline: 3px solid #ff9a2e; outline-offset: 2px; border-radius: 26px; }
+.bk-svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+/* 호출 버튼 (복구를 숨겼을 때) */
+.bk-call {
+  position: fixed; right: var(--bk-edge); bottom: var(--bk-bottom); z-index: 25;
+  width: 44px; height: 44px; padding: 0; border: 3px solid #fff; border-radius: 50%;
+  background: #ffb13b; box-shadow: 0 3px 0 #a9500e, 0 8px 16px rgba(40, 80, 20, .25);
+  font-size: 20px; line-height: 1; cursor: pointer; transition: transform .15s;
+}
+.bk-call.left { right: auto; left: var(--bk-edge-left); }
+.bk-call:hover { transform: scale(1.08) rotate(-8deg); }
+.bk-call:focus-visible { outline: 3px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 6px #e8761a; }
+
+/* ── 표정 (data-mood) ── */
+.bk-svg .e-happy, .bk-svg .e-sleep, .bk-svg .m-happy, .bk-svg .m-worry, .bk-svg .m-o,
+.bk-svg .x-sweat, .bk-svg .x-zzz, .bk-svg .x-spark, .bk-svg .brow-worry { display: none; }
+.bokgu[data-mood="happy"] .e-open, .bokgu[data-mood="cheer"] .e-open, .bokgu[data-mood="sleep"] .e-open { display: none; }
+.bokgu[data-mood="happy"] .e-happy, .bokgu[data-mood="cheer"] .e-happy, .bokgu[data-mood="sleep"] .e-sleep { display: inline; }
+.bokgu[data-mood="happy"] .m-idle, .bokgu[data-mood="cheer"] .m-idle,
+.bokgu[data-mood="worry"] .m-idle, .bokgu[data-mood="sad"] .m-idle, .bokgu[data-mood="alert"] .m-idle { display: none; }
+.bokgu[data-mood="happy"] .m-happy, .bokgu[data-mood="cheer"] .m-happy { display: inline; }
+.bokgu[data-mood="worry"] .m-worry, .bokgu[data-mood="sad"] .m-worry { display: inline; }
+.bokgu[data-mood="alert"] .m-o { display: inline; }
+.bokgu[data-mood="alert"] .x-sweat, .bokgu[data-mood="worry"] .x-sweat { display: inline; }
+.bokgu[data-mood="sleep"] .x-zzz { display: inline; }
+.bokgu[data-mood="cheer"] .x-spark { display: inline; }
+.bokgu[data-mood="worry"] .brow-idle, .bokgu[data-mood="sad"] .brow-idle { display: none; }
+.bokgu[data-mood="worry"] .brow-worry, .bokgu[data-mood="sad"] .brow-worry { display: inline; }
+
+/* ── 움직임 ── */
+.bk-svg .bk-head { transform-origin: 60px 90px; animation: bk-bob 3.4s ease-in-out infinite; }
+.bk-svg .bk-tail { transform-origin: 84px 106px; animation: bk-wag 1.7s ease-in-out infinite; }
+.bk-svg .e-open { transform-origin: 60px 56px; animation: bk-blink 5s infinite; }
+.bk-svg .bk-ear-l { transform-origin: 36px 40px; animation: bk-ear 7.5s infinite; }
+.bk-svg .bk-ear-r { transform-origin: 84px 40px; }
+.bk-svg .x-zzz text { animation: bk-zzz 2.4s ease-in-out infinite; }
+.bk-svg .x-zzz text:nth-child(2) { animation-delay: .8s; }
+.bk-svg .x-spark path { transform-box: fill-box; transform-origin: center; animation: bk-twinkle 1s ease-in-out infinite; }
+.bk-svg .x-spark path:nth-child(2) { animation-delay: .35s; }
+.bokgu[data-mood="happy"] .bk-tail, .bokgu[data-mood="cheer"] .bk-tail { animation-duration: .32s; }
+.bokgu[data-mood="think"] .bk-head { animation: none; transform: rotate(-7deg); transition: transform .25s; }
+.bokgu[data-mood="think"] .bk-eyes-open { transform: translate(1px, -2px); }
+.bokgu[data-mood="sad"] .bk-head, .bokgu[data-mood="worry"] .bk-head { animation: none; transform: translateY(2px) rotate(2deg); transition: transform .25s; }
+.bokgu[data-mood="sad"] .bk-ear-l, .bokgu[data-mood="sad"] .bk-ear-r { transform: rotate(8deg); }
+.bokgu[data-mood="sad"] .bk-ear-r { transform: rotate(-8deg); }
+.bokgu[data-mood="sad"] .bk-tail, .bokgu[data-mood="sleep"] .bk-tail { animation-duration: 4s; }
+.bokgu[data-mood="sleep"] .bk-head { animation-duration: 5.5s; transform: translateY(2px); }
+.bokgu[data-mood="alert"] .bk-dog { animation: bk-shake .3s 3; }
+.bokgu[data-mood="cheer"] .bk-dog { animation: bk-jump .55s 3 cubic-bezier(.3, 0, .5, 1); }
+.bokgu.hop .bk-dog { animation: bk-hop .45s cubic-bezier(.3, 1.6, .5, 1); }
+
+@keyframes bk-pop { from { opacity: 0; transform: translate3d(0, 8px, 0) scale(.82); } to { opacity: 1; transform: none; } }
+@keyframes bk-pop-out { to { opacity: 0; transform: translate3d(0, 6px, 0) scale(.9); } }
+@keyframes bk-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(1.6px); } }
+@keyframes bk-wag { 0%, 100% { transform: rotate(-9deg); } 50% { transform: rotate(11deg); } }
+@keyframes bk-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.08); } }
+@keyframes bk-ear { 0%, 88%, 100% { transform: rotate(0); } 91% { transform: rotate(-9deg); } 94% { transform: rotate(3deg); } 97% { transform: rotate(-4deg); } }
+@keyframes bk-hop { 0% { transform: translateY(0); } 40% { transform: translateY(-12px) scale(1.04, .98); } 100% { transform: translateY(0); } }
+@keyframes bk-jump { 0%, 100% { transform: translateY(0); } 45% { transform: translateY(-16px) scale(.97, 1.04); } }
+@keyframes bk-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px) rotate(-2deg); } 75% { transform: translateX(3px) rotate(2deg); } }
+@keyframes bk-zzz { 0%, 100% { opacity: 0; transform: translate(0, 4px); } 40%, 70% { opacity: 1; transform: translate(3px, -4px); } }
+@keyframes bk-twinkle { 0%, 100% { opacity: .2; transform: scale(.6); } 50% { opacity: 1; transform: scale(1.1); } }
+
+/* ── 작은 화면 ── */
+@media (max-width: 560px) {
+  .bk-dog { width: 68px; height: 74px; }
+  .bk-bubble { font-size: 13px; max-width: min(240px, calc(100vw - 32px)); }
+  .bk-bubble::after { right: 26px; }
+  .bokgu.left .bk-bubble::after { left: 26px; }
+  .bokgu { gap: 6px; }
+}
+/* 넓은 화면에서는 하단 푸터 글자를 가리지 않도록 조금 띄운다. */
+@media (min-width: 851px) and (min-height: 761px) {
+  .bokgu, .bk-call { --bk-bottom: max(34px, env(safe-area-inset-bottom, 0px)); }
+}
+@media (max-height: 640px) {
+  .bk-dog { width: 60px; height: 66px; }
+  .bk-menu { max-height: 62vh; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bokgu *, .bokgu, .bk-call { animation: none !important; transition: none !important; }
+  .bk-svg .x-zzz text { opacity: 1; }
+}

@@ -37,6 +37,7 @@
   function enterScreen(key) {
     const same = state.screen === key;
     state.screen = key;
+    if (!same) window.Bokgu?.screen(key); // 도우미 복구에게 화면 전환을 알린다.
     // 무한 반복 애니메이션이 화면을 다시 그려도 끊기지 않고 이어지도록 위상을 맞춘다.
     document.documentElement.style.setProperty('--ph', `${Math.round(performance.now())}ms`);
     return same;
@@ -370,6 +371,7 @@
     if (state.session && room.code === state.session.code) {
       announceMissionChange(state.room, room);
       playRoomSounds(state.room, room);
+      window.Bokgu?.room(state.room, room, state.session.playerId);
       setRoom(room);
     }
   });
@@ -1045,13 +1047,13 @@
   function checkDraft(word, room) {
     const text = word.normalize('NFC').replace(/\s+/gu, '');
     if (!text) return { level: 'neutral', text: '' };
-    if (/[^가-힣]/u.test(text)) return { level: 'warn', text: '한글만 입력할 수 있어요 (자음·모음만 있는 글자는 안 돼요)' };
+    if (/[^가-힣]/u.test(text)) return { level: 'warn', code: 'FORMAT', text: '한글만 입력할 수 있어요 (자음·모음만 있는 글자는 안 돼요)' };
     const allowed = (room.allowedSyllables && room.allowedSyllables.length) ? room.allowedSyllables : (room.lastSyllable ? [room.lastSyllable] : []);
     if (allowed.length && !allowed.includes(text[0])) {
-      return { level: 'warn', text: `첫 글자는 ${allowed.map(item => `‘${item}’`).join(' 또는 ')}(이)어야 해요` };
+      return { level: 'warn', code: 'START', text: `첫 글자는 ${allowed.map(item => `‘${item}’`).join(' 또는 ')}(이)어야 해요` };
     }
     if (text.length < 2) return { level: 'neutral', text: '2글자 이상 입력해 주세요' };
-    if (room.words.some(item => item.type === 'word' && item.word === text)) return { level: 'warn', text: '이미 사용한 단어예요' };
+    if (room.words.some(item => item.type === 'word' && item.word === text)) return { level: 'warn', code: 'DUPLICATE', text: '이미 사용한 단어예요' };
     const hits = room.mission ? [...text].filter(ch => ch === room.mission).length : 0;
     return { level: 'ok', text: hits ? `🎯 미션 글자 ×${hits} · 보너스 점수! Enter로 보내기` : 'Enter로 보내기' };
   }
@@ -1124,12 +1126,13 @@
     const word = input?.value.trim();
     if (!word) return flashEntryError('단어를 입력해 주세요.');
     const local = checkDraft(word, state.room);
-    if (local.level === 'warn') { sound.play('error'); return flashEntryError(local.text); }
+    if (local.level === 'warn') { sound.play('error'); window.Bokgu?.rejected({ code: local.code }); return flashEntryError(local.text); }
     const button = $('#word-form button[type="submit"]');
     if (button) { if (button.disabled) return; button.disabled = true; button.classList.add('busy'); }
     const result = await request('game:submit', { code: state.room.code, playerId: state.session.playerId, word });
     if (!result.ok) {
       sound.play('error');
+      window.Bokgu?.rejected({ code: result.code });
       flashEntryError(result.message || '단어를 보내지 못했어요.');
       const live = $('#word-form button[type="submit"]');
       if (live) { live.disabled = false; live.classList.remove('busy'); }
@@ -1137,6 +1140,7 @@
       state.draft = { key: '', value: '' };
       if (input) input.value = '';
       sound.play('submit');
+      window.Bokgu?.accepted({ word, points: result.points, chain: result.chain, missions: result.missions });
       if (result.missions) sound.play('bonus', 160);
       showToast(`+${result.points}점${result.chain > 1 ? ` · ${result.chain}체인` : ''}${result.newMission ? ` · 새 미션 ‘${result.newMission}’` : ''}`, 'success');
     }
@@ -1200,6 +1204,7 @@
     if (clockView.applied !== transform) { fill.style.transform = transform; clockView.applied = transform; }
     const low = seconds <= 5;
     if (fill.classList.contains('low') !== low) fill.classList.toggle('low', low);
+    if (state.session && room.currentPlayerId === state.session.playerId && seconds > 0 && seconds <= 5) window.Bokgu?.lowTime(key, seconds);
     if (state.session && room.currentPlayerId === state.session.playerId && seconds > 0 && seconds <= 3) {
       const tickKey = `${room.turnEndsAt}:${seconds}`;
       if (state.lastTick !== tickKey) { state.lastTick = tickKey; sound.play('tick'); }
@@ -1211,6 +1216,7 @@
   }
 
   function render() {
+    window.Bokgu?.sync(state.room, state.session ? state.session.playerId : null);
     if (!state.room || !state.session) { if (state.nickname) mountHub(); else renderHome(); return; }
     if (state.room.state === 'lobby') renderLobby(state.room);
     else renderGame(state.room);

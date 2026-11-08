@@ -18,7 +18,7 @@ const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const rawWords = JSON.parse(fs.readFileSync(path.join(ROOT, 'words.json'), 'utf8'));
 const dictionary = new Set(rawWords.map(normalizeWord));
 
-const publicFiles = new Set(['/index.html', '/styles.css', '/client.js']);
+const publicFiles = new Set(['/index.html', '/styles.css', '/client.js', '/mascot.css', '/mascot.js']);
 
 const server = http.createServer((req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;

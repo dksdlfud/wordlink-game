@@ -46,7 +46,7 @@ const ROOM_IDLE_MS = 10 * 60 * 1000; // 아무도 접속해 있지 않은 방을
 const PASSWORD_MAX_FAILS = 5;
 const PASSWORD_BLOCK_MS = 30 * 1000;
 
-const publicFiles = new Set(['/index.html', '/styles.css', '/client.js']);
+const publicFiles = new Set(['/index.html', '/styles.css', '/client.js', '/mascot.css', '/mascot.js']);
 
 const server = http.createServer((req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;
