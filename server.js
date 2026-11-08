@@ -43,6 +43,7 @@ const LOBBY_CHANNEL = 'wordlink:lobby';
 const LOBBY_CHAT_LIMIT = 60;      // 서버가 기억하는 최근 채팅 수
 const CHAT_MAX_LENGTH = 120;
 const CHAT_COOLDOWN_MS = 800;
+const ROOM_CHAT_LIMIT = 60;       // 방마다 기억하는 최근 채팅 수
 const LOBBY_USER_LIMIT = 200;     // 접속자 목록에 보내는 최대 인원
 const LOBBY_BROADCAST_MS = 300;   // 방/접속자 목록 갱신 묶음 전송 간격
 const ROOM_IDLE_MS = 10 * 60 * 1000; // 아무도 접속해 있지 않은 방을 치우는 시간
@@ -127,6 +128,9 @@ function publicProfile(key) {
     missionHits: profile.missionHits, streak: profile.streak, bestStreak: profile.bestStreak,
     recent: profile.recent
   };
+}
+function cleanChatText(value) {
+  return String(value ?? '').normalize('NFC').replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, CHAT_MAX_LENGTH);
 }
 function safeCode(value) { return String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5); }
 function sendAck(callback, payload) { if (typeof callback === 'function') callback(payload); }
@@ -499,6 +503,8 @@ function createRoomObject(code, host, options = {}) {
     players: new Map([[host.id, host]]),
     playerOrder: [host.id],
     words: [],
+    chat: [],
+    chatSeq: 0,
     usedWords: new Set(),
     lastSyllable: '',
     currentPlayerId: null,
@@ -620,7 +626,7 @@ io.on('connection', socket => {
   socket.on('lobby:chat', (payload = {}, callback) => {
     const entry = presence.get(socket.id);
     if (!entry || !socket.rooms.has(LOBBY_CHANNEL)) return sendAck(callback, { ok: false, message: '로비에 입장해야 채팅할 수 있어요.' });
-    const text = String(payload.text ?? '').normalize('NFC').replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, CHAT_MAX_LENGTH);
+    const text = cleanChatText(payload.text);
     if (!text) return sendAck(callback, { ok: false, throttled: true });
     const now = Date.now();
     if (now - (socket.data.lastChatAt || 0) < CHAT_COOLDOWN_MS) return sendAck(callback, { ok: false, throttled: true, message: '채팅을 너무 빨리 보내고 있어요.' });
@@ -892,6 +898,31 @@ io.on('connection', socket => {
     if (rooms.get(code) === room) scheduleIdleCleanup(room);
     scheduleLobbyBroadcast();
     sendAck(callback, { ok: true });
+  });
+
+  // ---------- 방 안 채팅 (대기실 · 게임 중 · 탈락 후에도 가능) ----------
+  socket.on('room:chat', (payload = {}, callback) => {
+    const room = rooms.get(safeCode(payload.code));
+    const player = room && playerForSocket(room, String(payload.playerId ?? ''), socket);
+    if (!room || !player) return sendAck(callback, { ok: false, message: '방에 연결되어 있지 않아요.' });
+    const text = cleanChatText(payload.text);
+    if (!text) return sendAck(callback, { ok: false, throttled: true });
+    const now = Date.now();
+    if (now - (player.lastChatAt || 0) < CHAT_COOLDOWN_MS) return sendAck(callback, { ok: false, throttled: true, message: '채팅을 너무 빨리 보내고 있어요.' });
+    player.lastChatAt = now;
+    room.chatSeq += 1;
+    const message = { id: room.chatSeq, name: player.name, text, at: now }; // playerId는 내보내지 않는다.
+    room.chat.push(message);
+    if (room.chat.length > ROOM_CHAT_LIMIT) room.chat.shift();
+    io.to(roomChannel(room.code)).emit('room:chat', { code: room.code, ...message });
+    sendAck(callback, { ok: true });
+  });
+
+  socket.on('room:chatlog', (payload = {}, callback) => {
+    const room = rooms.get(safeCode(payload.code));
+    const player = room && playerForSocket(room, String(payload.playerId ?? ''), socket);
+    if (!room || !player) return sendAck(callback, { ok: false, message: '방에 연결되어 있지 않아요.' });
+    sendAck(callback, { ok: true, chat: room.chat.slice(-ROOM_CHAT_LIMIT) });
   });
 
   socket.on('game:react', (payload = {}, callback) => {

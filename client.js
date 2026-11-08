@@ -94,6 +94,7 @@
   function clearSession() {
     state.session = null;
     state.room = null;
+    roomChat.code = null;
     localStorage.removeItem(SESSION_KEY);
   }
   function readSession() {
@@ -179,7 +180,10 @@
       end: [{ freq: 392, dur: .18, type: 'triangle' }, { freq: 330, at: .18, dur: .18, type: 'triangle' }, { freq: 262, at: .36, dur: .4, type: 'triangle' }],
       bonus: [{ freq: 784, dur: .08 }, { freq: 1047, at: .08, dur: .08 }, { freq: 1319, at: .16, dur: .22 }],
       pop: [{ freq: 700, dur: .07, gain: .035, to: 1000 }],
-      toggle: [{ freq: 880, dur: .08, gain: .05 }]
+      toggle: [{ freq: 880, dur: .08, gain: .05 }],
+      chat: [{ freq: 620, dur: .06, gain: .03 }, { freq: 830, at: .06, dur: .08, gain: .03 }],
+      // 시간이 얼마 안 남았을 때 한 번 울리는 경고음 (두 음이 떨어지는 사이렌)
+      warn: [{ freq: 990, dur: .13, type: 'square', gain: .05 }, { freq: 740, at: .15, dur: .13, type: 'square', gain: .05 }, { freq: 990, at: .3, dur: .13, type: 'square', gain: .05 }]
     };
     function context() {
       if (!ctx) {
@@ -220,6 +224,20 @@
       lastPlayed[name] = now;
       PATTERNS[name].forEach(note => tone(audio, note));
     }
+    // 남은 시간이 줄수록 점점 빠르고 높고 크게 울리는 긴장 비트.
+    // progress: 0(막 시작) → 1(시간 끝), mine: 내 차례인지 (내 차례는 심장 박동 소리를 더한다)
+    function beat(progress, mine) {
+      if (!enabled) return;
+      const audio = context();
+      if (!audio) return;
+      if (audio.state !== 'running') { unlock(); return; }
+      const p = Math.max(0, Math.min(1, progress));
+      tone(audio, { freq: 760 + p * 960, dur: .07, type: 'square', gain: mine ? .045 + p * .05 : .016 + p * .014 });
+      if (mine) {
+        tone(audio, { freq: 120, to: 55, dur: .2, type: 'sine', gain: .14 + p * .1 });
+        tone(audio, { freq: 100, to: 50, at: .15, dur: .17, type: 'sine', gain: .1 + p * .08 });
+      }
+    }
     async function setEnabled(value) {
       enabled = Boolean(value);
       try { localStorage.setItem(SOUND_KEY, enabled ? 'on' : 'off'); } catch { /* 무시 */ }
@@ -230,7 +248,7 @@
       }
     }
     ['pointerdown', 'keydown', 'touchend'].forEach(type => window.addEventListener(type, unlock, { passive: true }));
-    return { play, setEnabled, get enabled() { return enabled; } };
+    return { play, beat, setEnabled, get enabled() { return enabled; } };
   })();
   function syncSoundButton() {
     const button = $('#sound-toggle');
@@ -466,6 +484,7 @@
       if (result.ok) {
         state.nickname = saved.name;
         state.room = result.room;
+        roomChat.code = null; // 연결이 끊긴 사이의 대화를 다시 받아 온다.
         saveSession(saved);
         render();
       } else if (readSession()) {
@@ -495,6 +514,7 @@
     if (state.hub.chat.length > 80) state.hub.chat.shift();
     appendChatLine(message);
   });
+  socket.on('room:chat', appendRoomChat);
   socket.on('profile:reward', payload => {
     state.rewards.set(payload.gameId, payload);
     if (payload.leveledUp) { sound.play('win', 500); showToast(`레벨 업! Lv.${payload.after.level}`, 'success'); }
@@ -852,6 +872,96 @@
       if (!result.throttled) showToast(result.message, 'error');
     }
   }
+  // ---------- 방 안 채팅 (대기실 · 게임 화면 공용) ----------
+  // 화면이 다시 그려질 때마다 DOM을 새로 만들면 입력 중인 글이 날아가므로, 채팅 패널은 한 번만 만들고 새 화면의 자리에 옮겨 꽂는다.
+  const roomChat = { code: null, messages: [], node: null, log: null, input: null, refocus: null, scroll: null };
+  function ensureRoomChat() {
+    if (roomChat.node) return roomChat.node;
+    const node = document.createElement('section');
+    node.className = 'panel room-chat';
+    node.innerHTML = `<div class="panel-header"><span class="panel-title">채팅</span><span class="panel-caption">방 안 대화</span></div>
+      <div class="room-chat-log" role="log" aria-live="polite"></div>
+      <div class="reaction-bar room-reactions" aria-label="이모지 반응"><span class="reaction-label">반응</span><div class="reaction-buttons">${REACTIONS.map(emoji => `<button type="button" class="reaction-button" data-emoji="${emoji}" aria-label="${emoji} 반응 보내기">${emoji}</button>`).join('')}</div></div>
+      <form class="room-chat-form" autocomplete="off">
+        <input class="text-input" type="text" maxlength="${CHAT_MAX_LENGTH}" enterkeyhint="send" aria-label="채팅 메시지" placeholder="메시지 입력">
+        <button class="primary-button" type="submit">보내기</button>
+      </form>`;
+    roomChat.node = node;
+    roomChat.log = $('.room-chat-log', node);
+    roomChat.input = $('input', node);
+    $('form', node).addEventListener('submit', sendRoomChat);
+    node.querySelectorAll('.reaction-button').forEach(button => button.addEventListener('click', () => sendReaction(button.dataset.emoji)));
+    roomChat.input.addEventListener('keydown', event => { if (event.key === 'Escape') roomChat.input.blur(); });
+    return node;
+  }
+  // 화면을 다시 그리기 직전에 호출: 채팅창에 글을 쓰던 중이었는지, 스크롤 위치는 어디였는지 기억해 둔다.
+  function captureRoomChat() {
+    const { input, log } = roomChat;
+    roomChat.refocus = input && document.activeElement === input ? { start: input.selectionStart, end: input.selectionEnd, typing: input.value.length > 0 } : null;
+    roomChat.scroll = log && log.isConnected ? { top: log.scrollTop, bottom: log.scrollHeight - log.scrollTop - log.clientHeight < 40 } : null;
+  }
+  function roomChatLineHtml(message) { return chatLineHtml(message); }
+  function renderRoomChatLog() {
+    const { log } = roomChat;
+    if (!log) return;
+    log.innerHTML = roomChat.messages.length ? roomChat.messages.map(roomChatLineHtml).join('') : '<div class="chat-empty">아직 대화가 없어요.<br>인사를 건네 보세요!</div>';
+    log.scrollTop = log.scrollHeight;
+  }
+  function mountRoomChat() {
+    const slot = $('#room-chat-slot');
+    if (!slot) return;
+    const node = ensureRoomChat();
+    const code = state.session && state.session.code;
+    if (code && roomChat.code !== code) { // 다른 방에 들어왔거나 재접속 → 지난 대화를 서버에서 받아 온다.
+      roomChat.code = code;
+      roomChat.messages = [];
+      roomChat.input.value = '';
+      roomChat.scroll = null;
+      renderRoomChatLog();
+      request('room:chatlog', { code, playerId: state.session.playerId }).then(result => {
+        if (!result.ok || roomChat.code !== code) return;
+        const seen = new Set(result.chat.map(message => message.id));
+        roomChat.messages = result.chat.concat(roomChat.messages.filter(message => !seen.has(message.id)));
+        renderRoomChatLog();
+      });
+    }
+    slot.replaceWith(node);
+    node.classList.toggle('in-game', state.room && state.room.state !== 'lobby'); // 이모지 반응은 게임이 시작된 뒤에만 보인다.
+    const saved = roomChat.scroll;
+    if (saved && !saved.bottom) roomChat.log.scrollTop = saved.top; else roomChat.log.scrollTop = roomChat.log.scrollHeight;
+    const refocus = roomChat.refocus;
+    roomChat.refocus = null;
+    if (refocus) { roomChat.input.focus({ preventScroll: true }); try { roomChat.input.setSelectionRange(refocus.start, refocus.end); } catch { /* 무시 */ } }
+  }
+  function appendRoomChat(message) {
+    if (!state.session || message.code !== state.session.code || roomChat.code !== message.code) return;
+    if (roomChat.messages.some(item => item.id === message.id)) return;
+    roomChat.messages.push(message);
+    if (roomChat.messages.length > 80) roomChat.messages.shift();
+    const { log } = roomChat;
+    if (log) {
+      const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+      $('.chat-empty', log)?.remove();
+      log.insertAdjacentHTML('beforeend', roomChatLineHtml(message));
+      log.lastElementChild.classList.add('enter');
+      while (log.children.length > 80) log.firstChild.remove();
+      if (nearBottom || message.name === state.nickname) log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' });
+    }
+    if (message.name !== state.nickname) sound.play('chat');
+  }
+  async function sendRoomChat(event) {
+    event.preventDefault();
+    const input = roomChat.input;
+    const text = input.value.trim();
+    if (!text || !state.session) return;
+    input.value = '';
+    const result = await request('room:chat', { code: state.session.code, playerId: state.session.playerId, text });
+    if (!result.ok) {
+      if (!input.value) input.value = text; // 너무 빨리 보냈거나 실패하면 쓰던 글을 돌려준다.
+      if (!result.throttled) showToast(result.message, 'error');
+    }
+  }
+
   async function refreshHub() {
     const result = await request('lobby:refresh');
     if (!result.ok) return showToast(result.message, 'error');
@@ -944,6 +1054,7 @@
 
   function renderLobby(room) {
     const sameScreen = enterScreen('lobby');
+    captureRoomChat();
     document.body.classList.remove('modal-open');
     const mine = room.players.find(player => player.id === state.session.playerId);
     const isHost = room.hostId === state.session.playerId;
@@ -1013,6 +1124,7 @@
             <div class="panel-header"><span class="panel-title">게임 설정</span><span class="panel-caption">${isHost ? '방장 설정' : '보기 전용'}</span></div>
             <div class="settings-content">${settingsContent}</div>
           </section>
+          <div id="room-chat-slot"></div>
         </div>
         <div class="invite-strip"><p><b>친구를 초대해 보세요</b>방 코드 ${escapeHtml(room.code)} 또는 초대 링크를 공유하면 바로 참가할 수 있어요.</p><button id="copy-invite" class="secondary-button">초대 링크 복사 ↗</button></div>
         <div class="lobby-actions">
@@ -1030,6 +1142,7 @@
     $('#copy-invite').addEventListener('click', copyInvite);
     if ($('#apply-settings')) $('#apply-settings').addEventListener('click', applySettings);
     if ($('#start-game')) $('#start-game').addEventListener('click', startGame);
+    mountRoomChat();
     settleScreen(sameScreen);
   }
   async function applySettings() {
@@ -1067,9 +1180,11 @@
 
   function renderGame(room) {
     const sameScreen = enterScreen('game');
+    captureRoomChat();
     const prev = sameScreen && state.shown && state.shown.gameId === room.gameId ? state.shown : null;
     const keepScroll = {
-      history: $('#history-list') ? $('#history-list').scrollTop : 0,
+      chainLeft: $('#chain-strip') ? $('#chain-strip').scrollLeft : 0,
+      chainAtEnd: !$('#chain-strip') || (() => { const strip = $('#chain-strip'); return strip.scrollWidth - strip.scrollLeft - strip.clientWidth < 48; })(),
       scores: $('.score-list') ? $('.score-list').scrollLeft : 0
     };
     const mine = room.players.find(player => player.id === state.session.playerId);
@@ -1082,21 +1197,27 @@
     const sortedPlayers = [...room.players].sort((a, b) => Number(a.eliminated) - Number(b.eliminated) || b.score - a.score);
     const scoreRows = sortedPlayers.map(player => {
       const current = player.id === room.currentPlayerId;
-      const status = player.eliminated ? '탈락' : !player.online ? '연결 끊김' : current ? '현재 차례' : '플레이 중';
+      const status = player.eliminated ? '탈락' : !player.online ? '끊김' : ''; // 평소에는 비워 둔다 (현재 차례는 노란 테두리로 보여 준다)
       const arrive = current && prev && prev.currentPlayerId !== room.currentPlayerId;
       const bump = prev && prev.scores[player.id] != null && player.score > prev.scores[player.id];
       return `<div class="score-row ${current ? 'current' : ''}${arrive ? ' arrive' : ''} ${player.eliminated ? 'eliminated' : ''}">
         ${avatar(player.name, true)}
-        <div class="score-name">${lvBadge(player.level)}${escapeHtml(player.name)}<span class="score-state">${status}${room.totalRounds > 1 ? ` · ${player.roundWins}승` : ''}</span></div>
+        <div class="score-name"><span class="score-nick">${escapeHtml(player.name)}</span><span class="score-state">${lvBadge(player.level)}${status}${room.totalRounds > 1 && player.roundWins ? `${status ? ' · ' : ''}${player.roundWins}승` : ''}</span></div>
         <span class="score-points${bump ? ' bump' : ''}">${player.score}</span>
       </div>`;
     }).join('');
     const addedEntries = prev ? Math.max(0, room.words.length - prev.entryCount) : 0;
-    const history = room.words.slice().reverse().map((item, reverseIndex) => {
-      const enter = reverseIndex < addedEntries ? ' enter' : '';
-      if (item.type === 'system') return `<div class="history-system${enter}">${escapeHtml(item.text)}</div>`;
-      return `<div class="history-item${enter}"><span class="history-index">${String(room.words.filter(entry => entry.type === 'word').indexOf(item) + 1).padStart(2, '0')}</span>${avatar(item.playerName, true)}<span class="history-word">${escapeHtml(item.word)}</span><span class="history-player">${escapeHtml(item.playerName)}</span><span class="history-points">${item.missions ? `<em class="history-bonus">🎯×${item.missions}</em> ` : ''}+${item.points}</span></div>`;
-    }).join('');
+    // 단어 기록: 오래된 단어 → 최신 단어 순으로 가로로 이어 붙인다. (최신 단어가 오른쪽 끝, 새 단어가 들어오면 자동으로 따라간다)
+    const chainParts = [];
+    let prevWasWord = false;
+    room.words.forEach((item, index) => {
+      const enter = index >= room.words.length - addedEntries ? ' enter' : '';
+      if (item.type === 'system') { chainParts.push(`<span class="chain-sep${enter}">${escapeHtml(item.text)}</span>`); prevWasWord = false; return; }
+      if (prevWasWord) chainParts.push('<span class="chain-arrow" aria-hidden="true">→</span>');
+      chainParts.push(`<span class="chain-chip${enter}" title="${escapeHtml(item.playerName)} +${item.points}점">${avatar(item.playerName, true)}<b class="chain-chip-word">${escapeHtml(item.word)}</b><em class="chain-chip-pts">${item.missions ? '🎯' : ''}+${item.points}</em></span>`);
+      prevWasWord = true;
+    });
+    const history = chainParts.join('');
     const finished = room.state === 'finished';
     const winnerContent = finished ? `<div class="finished-banner"><div class="trophy">🏆</div><h2>${room.winnerName ? `${escapeHtml(room.winnerName)} 승리!` : '게임 종료'}</h2></div>` : '';
     const breakContent = onBreak && room.roundResult ? (() => {
@@ -1146,7 +1267,6 @@
           </form>
           <div id="entry-hint" class="entry-hint" role="status" aria-live="polite">${myTurn ? `<span class="hint-neutral">${room.mission ? `🎯 미션 글자 ‘${escapeHtml(room.mission)}’가 들어가면 보너스 점수!` : '한글 2~12글자 · Enter로 보내기'}</span>` : ''}</div>
         </section>`;
-    const reactionBar = `<section class="reaction-bar" aria-label="이모지 반응"><span class="reaction-label">반응</span><div class="reaction-buttons">${REACTIONS.map(emoji => `<button type="button" class="reaction-button" data-emoji="${emoji}" aria-label="${emoji} 반응 보내기">${emoji}</button>`).join('')}</div></section>`;
     app.innerHTML = `
       <section class="fade-in game-screen">
         <div class="game-topline">
@@ -1183,16 +1303,16 @@
             <div class="turn-clock"><span class="clock-icon">◷</span><span id="clock-number" class="clock-number">${isPlaying ? room.turnSeconds : '—'}</span></div>
           </div>
         </section>
+        <section class="chain-strip-panel" aria-label="단어 기록">
+          <div class="chain-strip-head"><span class="chain-strip-title">단어 기록</span><span class="chain-strip-count">${wordCount}개</span></div>
+          <div id="chain-strip" class="chain-strip" tabindex="0" role="list">${history || '<span class="chain-empty">아직 입력된 단어가 없어요. 첫 번째 단어의 주인공이 되어 보세요!</span>'}</div>
+        </section>
         ${entryMarkup}
         <div class="players-row">
           <section class="panel score-panel"><div class="panel-header"><span class="panel-title">플레이어 순위</span><span class="panel-caption">점수</span></div><div class="score-list">${scoreRows}</div></section>
         </div>
-        ${reactionBar}
         </div>
-        <section class="panel history-panel chat-panel">
-          <div class="panel-header"><span class="panel-title">단어 기록</span><span class="panel-caption">${wordCount}개</span></div>
-          <div id="history-list" class="history-list">${history || '<div class="history-empty">아직 입력된 단어가 없어요.<br>첫 번째 단어의 주인공이 되어 보세요!</div>'}</div>
-        </section>
+        <div id="room-chat-slot"></div>
         </div>
       </section>${summaryHtml}`;
     document.body.classList.toggle('modal-open', showSummary);
@@ -1200,7 +1320,6 @@
     $('#leave-room').addEventListener('click', leaveRoom);
     $('#copy-invite').addEventListener('click', copyInvite);
     if ($('#rematch')) $('#rematch').addEventListener('click', rematch);
-    app.querySelectorAll('.reaction-button').forEach(button => button.addEventListener('click', () => sendReaction(button.dataset.emoji)));
     if ($('#open-summary')) $('#open-summary').addEventListener('click', () => { state.summaryClosedGame = null; state.summaryShownGame = null; render(); });
     if (showSummary) {
       $('#summary-close').addEventListener('click', closeSummary);
@@ -1212,14 +1331,18 @@
     setupEntry(room, { myTurn, allowed, turnKey });
     updateClock();
     settleScreen(sameScreen);
-    // 화면을 다시 그려도 스크롤 위치를 지킨다. 새 단어가 들어왔을 때만 맨 위로 부드럽게 올린다.
-    const historyNode = $('#history-list');
-    if (historyNode) {
-      if (newWord || addedEntries) {
-        historyNode.scrollTo({ top: Math.min(keepScroll.history, historyNode.scrollHeight), behavior: 'instant' });
-        historyNode.scrollTo({ top: 0, behavior: 'smooth' });
-      } else historyNode.scrollTo({ top: keepScroll.history, behavior: 'instant' });
+    // 화면을 다시 그려도 스크롤 위치를 지킨다. 가로 기록은 끝에 있었거나 새 단어가 들어왔을 때만 최신 단어(오른쪽 끝)로 따라간다.
+    const chainNode = $('#chain-strip');
+    if (chainNode) {
+      chainNode.addEventListener('wheel', event => {
+        if (Math.abs(event.deltaY) > Math.abs(event.deltaX) && chainNode.scrollWidth > chainNode.clientWidth) { chainNode.scrollLeft += event.deltaY; event.preventDefault(); }
+      }, { passive: false });
+      if (keepScroll.chainAtEnd || newWord || addedEntries) {
+        chainNode.scrollTo({ left: Math.min(keepScroll.chainLeft, chainNode.scrollWidth), behavior: 'instant' });
+        chainNode.scrollTo({ left: chainNode.scrollWidth, behavior: keepScroll.chainLeft ? 'smooth' : 'instant' });
+      } else chainNode.scrollTo({ left: keepScroll.chainLeft, behavior: 'instant' });
     }
+    mountRoomChat();
     const scoreNode = $('.score-list');
     if (scoreNode && keepScroll.scores) scoreNode.scrollLeft = keepScroll.scores;
     state.shown = {
@@ -1292,7 +1415,9 @@
     if (myTurn) {
       refresh();
       const keepFocus = !state.hadFocusBeforeRender && document.activeElement && document.activeElement !== document.body && document.activeElement.closest?.('.reaction-bar');
-      if (!keepFocus) { input.focus({ preventScroll: true }); input.setSelectionRange(input.value.length, input.value.length); }
+      // 채팅창에 글을 쓰던 중이면 내 차례가 와도 포커스를 빼앗지 않는다. (비어 있으면 단어 입력창으로 이동)
+      const chatBusy = Boolean(roomChat.refocus && roomChat.refocus.typing);
+      if (!keepFocus && !chatBusy) { roomChat.refocus = null; input.focus({ preventScroll: true }); input.setSelectionRange(input.value.length, input.value.length); }
     } else refresh();
   }
   function flashEntryError(message) {
@@ -1391,10 +1516,28 @@
     const low = seconds <= 5;
     if (fill.classList.contains('low') !== low) fill.classList.toggle('low', low);
     if (state.session && room.currentPlayerId === state.session.playerId && seconds > 0 && seconds <= 5) window.Bokgu?.lowTime(key, seconds);
-    if (state.session && room.currentPlayerId === state.session.playerId && seconds > 0 && seconds <= 3) {
-      const tickKey = `${room.turnEndsAt}:${seconds}`;
-      if (state.lastTick !== tickKey) { state.lastTick = tickKey; sound.play('tick'); }
+    urgencyAudio(room, remaining, duration, key);
+  }
+  // 남은 턴 시간에 따라 소리를 점점 키운다. 내 차례는 길게(최대 10초 전부터), 남의 차례도 마지막 5초는 작게 들려 줘서 모두가 긴장하게 한다.
+  const beatState = { key: '', last: Infinity, warned: false };
+  function urgencyAudio(room, remainingMs, durationMs, key) {
+    if (!state.session) return;
+    const mine = room.currentPlayerId === state.session.playerId;
+    if (beatState.key !== key) { beatState.key = key; beatState.last = Infinity; beatState.warned = false; }
+    if (remainingMs <= 0) return;
+    const limit = mine ? Math.min(10000, durationMs * .6) : Math.min(5000, durationMs * .4);
+    if (remainingMs > limit) return;
+    if (mine && !beatState.warned) { // 경고 구간에 들어서는 순간 사이렌 한 번
+      beatState.warned = true;
+      beatState.last = remainingMs;
+      sound.play('warn');
+      return;
     }
+    const interval = remainingMs > 5000 ? 1000 : remainingMs > 3000 ? 650 : remainingMs > 1500 ? 420 : 260;
+    if (beatState.last - remainingMs < interval) return;
+    beatState.last = remainingMs;
+    sound.beat(1 - remainingMs / limit, mine);
+    if (mine && remainingMs <= 3000 && sound.enabled && navigator.vibrate) { try { navigator.vibrate(35); } catch { /* 지원하지 않는 기기 */ } }
   }
   function frameLoop() {
     updateClock();

@@ -1543,3 +1543,154 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 @media (prefers-reduced-motion: reduce) {
   .xp-fill.grow, .reward-level em { animation: none; }
 }
+
+/* =====================================================================
+   v0.5 — 가로 단어 기록 · 방 채팅 · 큰 점수 박스
+   (위쪽 규칙이 여러 겹으로 쌓여 있어서, 이 블록은 맨 끝에서 덮어쓴다)
+   ===================================================================== */
+
+/* ── 단어 기록: 가로로 이어지는 체인 ── */
+.game-screen .chain-strip-panel {
+  flex: none; display: flex; align-items: center; gap: 12px; min-width: 0;
+  padding: 6px 12px 6px 16px; border: 3px solid #fff; border-radius: 16px;
+  background: rgba(255, 255, 255, .94); box-shadow: 0 4px 0 rgba(60, 100, 30, .22);
+}
+.chain-strip-head { flex: none; display: flex; flex-direction: column; line-height: 1.2; }
+.chain-strip-title { font-family: 'Jua', sans-serif; font-size: 15px; color: var(--text); }
+.chain-strip-count { font-size: 12px; font-weight: 700; color: var(--muted-2); }
+.chain-strip {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;
+  overflow-x: auto; overflow-y: hidden; padding: 6px 4px 8px; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: #d8c79f transparent;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 16px); mask-image: linear-gradient(to right, transparent 0, #000 16px);
+}
+.chain-chip {
+  flex: none; display: inline-flex; align-items: center; gap: 8px; padding: 4px 13px 4px 5px;
+  border: 2px solid #eadbb8; border-radius: 999px; background: #f8f1df; white-space: nowrap;
+}
+.chain-chip .avatar { width: 28px; height: 28px; border-radius: 9px; font-size: 12px; }
+.chain-chip-word { font-size: 17px; font-weight: 900; color: var(--text); letter-spacing: -.02em; }
+.chain-chip-pts { font-style: normal; font-size: 12px; font-weight: 800; color: #2f8f3a; }
+.chain-strip > .chain-chip:last-child { background: #fff6cf; border-color: #ffc83a; box-shadow: 0 0 0 3px rgba(255, 200, 58, .35); }
+.chain-arrow { flex: none; color: #c9b88e; font-weight: 900; font-size: 15px; }
+.chain-sep { flex: none; padding: 3px 10px; border-radius: 999px; background: #ffe9a8; color: #8a5a00; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.chain-empty { color: var(--muted-2); font-size: 14px; white-space: nowrap; }
+.chain-chip.enter, .chain-sep.enter { animation: chain-in .45s var(--ease-out, ease-out) both; }
+@keyframes chain-in { from { opacity: 0; transform: translate3d(16px, 0, 0) scale(.92); } to { opacity: 1; transform: none; } }
+
+/* ── 방 채팅 (대기실 · 게임 화면) ── */
+.room-chat { display: flex; flex-direction: column; min-height: 0; margin: 0; overflow: hidden; background: #fff; }
+.room-chat .panel-header { flex: none; padding: 12px 16px 6px; }
+.room-chat-log { flex: 1 1 auto; min-height: 0; padding: 0 16px 8px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #d8c79f transparent; }
+.room-chat-log .chat-line { font-size: 15px; padding: 3px 0; }
+.room-chat-form { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) 78px; gap: 8px; padding: 10px 12px 12px; border-top: 2px solid #eadbb8; background: #f8f1df; }
+.room-chat-form .text-input { height: 42px; min-height: 42px; padding: 0 16px; border-radius: 99px; font-size: 15px; }
+.room-chat-form .primary-button { height: 42px; min-height: 42px; padding: 0; font-size: 14px; }
+.game-body > .room-chat { margin-top: 0; }
+
+/* 대기실: 설정 · 플레이어 · 채팅 */
+@media (min-width: 1000px) {
+  .lobby-screen .lobby-grid { grid-template-columns: 1fr .85fr .95fr; }
+}
+.lobby-screen .settings-panel .settings-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+@media (min-width: 851px) and (max-width: 999px) {
+  .lobby-screen .lobby-grid { grid-template-columns: .8fr 1.2fr; grid-template-rows: minmax(0, 1fr) minmax(0, .8fr); }
+  .lobby-screen .lobby-grid > .settings-panel { grid-row: 1 / 3; }
+  .lobby-screen .lobby-grid > .room-chat { grid-column: 2; }
+}
+@media (max-width: 850px) {
+  .lobby-screen .lobby-grid { grid-template-columns: 1fr; grid-template-rows: none; }
+  .lobby-screen .lobby-grid > .room-chat { min-height: 220px; max-height: 260px; }
+}
+
+/* ── 플레이어 순위: 큰 박스 (남는 공간을 꽉 채운다) ── */
+.game-screen .game-left { overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.6) transparent; }
+.game-screen .game-left .players-row { flex: 1 0 auto; overflow: visible; }
+.game-screen .score-panel { display: flex; flex-direction: column; height: 100%; }
+.game-screen .score-panel .panel-header { flex: none; padding: 0 4px 8px; }
+.game-screen .score-panel .panel-title { font-size: 18px; }
+.game-screen .players-row .score-list {
+  flex: 1 1 auto; display: grid; padding: 0; gap: 10px; align-content: stretch;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); grid-auto-rows: minmax(84px, 1fr);
+}
+.game-screen .score-row { padding: 8px 10px 8px 10px; gap: 9px; border-radius: 18px; }
+.game-screen .score-row .avatar { width: 48px; height: 48px; border-radius: 14px; font-size: 21px; }
+.game-screen .score-name { display: flex; flex-direction: column; gap: 4px; overflow: visible; white-space: normal; text-overflow: clip; }
+.game-screen .score-nick { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 17px; font-weight: 900; line-height: 1.2; }
+.game-screen .score-state { display: flex; align-items: center; gap: 4px; min-height: 16px; margin: 0; font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; }
+.game-screen .score-state .lv-badge { flex: none; margin: 0; }
+.game-screen .score-points { flex: none; min-width: 50px; padding: 6px 8px; border-radius: 12px; font-size: 24px; line-height: 1.1; }
+
+/* 높이가 낮은 화면에서도 위쪽 카드가 너무 많은 자리를 차지하지 않게 */
+.game-screen .turn-card.stage { margin-top: 10px; padding: 16px 16px 10px; }
+.game-screen .stage-next { min-height: 84px; }
+.game-screen .stage-chain { width: 80px; height: 80px; min-height: 80px; }
+.game-screen .chain-current { min-height: 48px; }
+.game-screen .chain-word { font-size: clamp(26px, 4vh, 38px); }
+
+/* 모바일 · 태블릿 */
+@media (max-width: 850px) {
+  .game-screen .game-left { overflow: visible; }
+  .game-screen .game-left .players-row { flex: none; }
+  .game-screen .players-row .score-list { display: grid; overflow: visible; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); grid-auto-rows: auto; gap: 8px; }
+  .game-screen .score-row { min-width: 0; flex: initial; }
+  .game-screen .score-panel .panel-header { display: flex; }
+  .game-body > .room-chat { min-height: 240px; max-height: 45vh; }
+  .game-screen .chain-strip-panel { padding: 4px 8px 4px 12px; }
+}
+@media (max-width: 560px) {
+  .game-screen .players-row .score-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .game-screen .chain-strip-head { flex-direction: row; gap: 6px; align-items: baseline; }
+  .game-screen .chain-strip-title { font-size: 13px; }
+  .game-screen .chain-strip-panel { gap: 8px; }
+  .game-screen .score-row .avatar { width: 40px; height: 40px; font-size: 17px; border-radius: 12px; }
+  .game-screen .score-nick { font-size: 15px; }
+  .game-screen .score-state { font-size: 11px; }
+  .game-screen .score-state .lv-badge { display: none; }
+  .game-screen .score-points { min-width: 46px; font-size: 20px; padding: 4px 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chain-chip.enter, .chain-sep.enter { animation: none; }
+}
+
+/* 채팅 패널 안의 이모지 반응 줄 (게임 중에만) */
+.room-chat .room-reactions { display: none; flex: none; margin: 0; padding: 6px 12px; border: 0; border-top: 2px solid #eadbb8; border-radius: 0; background: #fffaf0; box-shadow: none; }
+.room-chat.in-game .room-reactions { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.room-chat .room-reactions .reaction-buttons { display: flex; gap: 4px; margin-left: auto; }
+.room-chat .room-reactions .reaction-button { width: 42px; height: 38px; font-size: 20px; }
+/* 복구(마스코트)가 오른쪽 아래에 앉아 있으면 보내기 버튼을 왼쪽으로 옮겨 가려지지 않게 한다 */
+@media (min-width: 851px) {
+  body:has(.bokgu:not([hidden]):not(.left)) .game-body .room-chat-form { grid-template-columns: 78px minmax(0, 1fr); }
+  body:has(.bokgu:not([hidden]):not(.left)) .game-body .room-chat-form .primary-button { order: -1; }
+  body:has(.bokgu:not([hidden]):not(.left)) .game-body .room-chat-form .text-input { padding-right: 70px; }
+}
+
+/* 높이가 낮은 노트북 화면: 위쪽 카드를 촘촘하게 */
+@media (min-width: 851px) and (max-height: 860px) {
+  .game-screen .game-left { gap: 8px; }
+  .game-screen .turn-card.stage { margin-top: 14px; padding: 12px 14px 8px; gap: 6px 12px; }
+  .game-screen .stage-next { min-height: 70px; }
+  .game-screen .stage-next .stage-letter { font-size: 40px; }
+  .game-screen .stage-chain { width: 70px; height: 70px; min-height: 70px; }
+  .game-screen .stage-center { padding: 4px 10px 8px; }
+  .game-screen .turn-name { font-size: 18px; margin: 2px 0 0; }
+  .game-screen .chain-current { min-height: 40px; margin-top: 2px; }
+  .game-screen .chain-word { font-size: 28px; }
+  .game-screen .timer-track { margin-top: 4px; height: 10px; }
+  .game-screen .stage-mission { padding: 2px 14px; }
+  .game-screen .chain-strip-panel { padding: 2px 10px 2px 14px; }
+  .chain-strip { padding: 4px 4px 6px; }
+  .chain-chip .avatar { width: 24px; height: 24px; font-size: 11px; }
+  .chain-chip-word { font-size: 16px; }
+  .game-screen .entry-card { padding: 8px 12px 6px; }
+  .game-screen .entry-top { margin-bottom: 4px; min-height: 30px; }
+  .game-screen .entry-card .entry-form .text-input, .game-screen .entry-card .entry-send { height: 46px; min-height: 46px; }
+  .game-screen .entry-hint { min-height: 18px; margin-top: 4px; font-size: 12px; }
+  .game-screen .score-panel .panel-header { padding-bottom: 4px; }
+  .game-screen .score-panel .panel-title { font-size: 16px; }
+  .game-screen .players-row .score-list { gap: 8px; grid-auto-rows: minmax(68px, 1fr); }
+  .game-screen .score-row { padding: 6px 12px 6px 10px; }
+  .game-screen .score-row .avatar { width: 44px; height: 44px; font-size: 19px; }
+  .game-screen .score-nick { font-size: 16px; }
+  .game-screen .score-points { font-size: 22px; padding: 4px 8px; }
+}
