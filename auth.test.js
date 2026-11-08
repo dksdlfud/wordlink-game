@@ -78,6 +78,12 @@ test('로그인 전체 흐름: 인가 → 콜백 → 세션 쿠키 → 계정 pl
   assert.match(info.playerId, /^u-[0-9a-f]{40}$/);
   assert.equal(info.playerId, t.auth.playerIdFor('google', 'g-123')); // 같은 계정이면 항상 같은 ID
   assert.notEqual(info.playerId, t.auth.playerIdFor('google', 'g-124'));
+  assert.match(info.statsKey, /^s-[0-9a-f]{32}$/);
+  assert.equal(info.statsKey, t.auth.statsKeyFor('google', 'g-123'));
+  assert.notEqual(info.statsKey, t.auth.statsKeyFor('github', 'g-123')); // 제공자가 다르면 다른 계정
+  const rotated = createAuth({ providers: {}, warn: false, env: { SESSION_SECRET: 'another-secret' } });
+  assert.equal(rotated.statsKeyFor('google', 'g-123'), info.statsKey); // 비밀값이 바뀌어도 기록 키는 그대로
+  assert.equal(JSON.stringify(me).includes(info.statsKey), false);
 
   const out = await get(`${t.app.base}/auth/logout`, session, { method: 'POST' });
   assert.match(out.headers.getSetCookie()[0], /Max-Age=0/);

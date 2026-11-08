@@ -28,6 +28,8 @@
     nickname: null,          // 로비에 입장한 닉네임 (없으면 홈 화면)
     auth: { providers: [], user: null }, // 소셜 로그인 상태 (/auth/me) — user가 있으면 로그인됨
     hub: { rooms: [], users: [], total: 0, chat: [], onlyJoinable: false },
+    profile: null,           // 내 경험치·전적 (null: 아직 모름 · { guest: true }: 게스트 · 그 밖에는 서버가 준 프로필)
+    rewards: new Map(),      // gameId → 그 경기에서 받은 경험치 (결과 화면에 표시)
     dialogClose: null,
     draft: { key: '', value: '' }, // 입력 중인 단어 (화면이 다시 그려져도 유지)
     screen: '',   // 지금 보이는 화면 종류 (home · hub · lobby · game) — 같은 화면을 다시 그릴 땐 등장 애니메이션을 생략한다.
@@ -135,6 +137,19 @@
   }
   function avatar(name, small = false) {
     return `<span class="avatar tinted ${small ? 'small' : ''}" style="${avatarStyle(name)}">${escapeHtml((name || '?').slice(0, 1))}</span>`;
+  }
+  // ---------- 레벨 ----------
+  const TIER_FROM = [1, 5, 10, 20, 35, 50, 70, 90]; // 칭호 구간 시작 레벨 — progress.js 의 TITLES 와 같게 유지
+  function tierOf(level) { let tier = 0; TIER_FROM.forEach((from, index) => { if (level >= from) tier = index; }); return tier; }
+  // 게스트(레벨 없음)는 배지를 그리지 않는다.
+  function lvBadge(level) { return Number.isFinite(level) && level > 0 ? `<span class="lv-badge tier-${tierOf(level)}" title="레벨 ${level}">Lv.${level}</span>` : ''; }
+  function xpBar(pct, extraClass = '', style = '') { return `<div class="xp-track"><i class="xp-fill ${extraClass}" style="width:${Math.max(0, Math.min(100, pct))}%;${style}"></i></div>`; }
+  async function loadProfile() {
+    const result = await request('profile:me');
+    if (!result.ok) return null;
+    state.profile = result.guest ? { guest: true } : result.profile;
+    updateProfile();
+    return state.profile;
   }
   function setConnection(connected) {
     connectionDot.className = connected ? 'online' : 'offline';
@@ -293,6 +308,100 @@
     const seconds = total % 60;
     return minutes ? `${minutes}분 ${String(seconds).padStart(2, '0')}초` : `${seconds}초`;
   }
+  // 결과 화면의 경험치 영역. 로그인했으면 이번 경기에서 받은 경험치와 내역, 게스트면 로그인 안내.
+  function rewardMarkup(reward, animate) {
+    if (!reward) return state.auth.user ? '' : '<p class="reward-note">로그인하면 경험치와 전적이 저장돼요.</p>';
+    if (reward.skipped === 'short') return '<p class="reward-note">경기가 너무 짧아 경험치는 지급되지 않았어요. (단어 6개 이상 · 2명 이상 참여)</p>';
+    if (reward.skipped === 'noword') return '<p class="reward-note">단어를 하나도 내지 않아 경험치는 지급되지 않았어요.</p>';
+    const from = reward.leveledUp ? 0 : reward.before.pct;
+    const parts = reward.parts.map(part => `<li><span>${escapeHtml(part.label)}</span><b>+${part.xp}</b></li>`).join('');
+    return `<div class="reward-box${reward.leveledUp ? ' levelup' : ''}">
+      <div class="reward-head">
+        <strong>+${reward.xp} XP</strong>
+        <span class="reward-level">${lvBadge(reward.after.level)}${reward.leveledUp ? `<em>LEVEL UP!</em>` : ''}</span>
+      </div>
+      ${xpBar(reward.after.pct, animate ? 'grow' : '', `--from:${from}%`)}
+      <div class="reward-sub"><span>${escapeHtml(reward.title)}${reward.newTitle ? ' · 새 칭호!' : ''}</span><span>${reward.after.max ? 'MAX' : `다음 레벨까지 ${(reward.after.need - reward.after.into).toLocaleString('ko-KR')} XP`}</span></div>
+      <ul class="reward-parts">${parts}</ul>
+    </div>`;
+  }
+
+  // ---------- 마이페이지 · 랭킹 ----------
+  function loginPrompt(title, note) {
+    const links = state.auth.providers.map(provider => `<a class="social-button social-${escapeHtml(provider.id)}" href="/auth/${encodeURIComponent(provider.id)}?next=%2F"><i aria-hidden="true">${escapeHtml(provider.label.slice(0, 1))}</i>${escapeHtml(provider.label)}</a>`).join('');
+    openDialog(`
+      <h2 class="dialog-title">${title}</h2>
+      <p class="dialog-note">${note}</p>
+      ${links ? `<div class="social-row" style="margin-top:16px">${links}</div>` : '<p class="dialog-note" style="margin-top:12px">이 서버에는 아직 소셜 로그인이 설정되어 있지 않아요.</p>'}
+      <div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>닫기</button></div>`);
+  }
+  function formatAgo(at) {
+    const diff = Math.max(0, Date.now() - at);
+    const minutes = Math.floor(diff / 60000);
+    if (minutes < 1) return '방금';
+    if (minutes < 60) return `${minutes}분 전`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}시간 전`;
+    return `${Math.floor(hours / 24)}일 전`;
+  }
+  async function openMyPage() {
+    if (!state.auth.user) {
+      return loginPrompt('👤 마이페이지', '게스트는 기록이 저장되지 않아요.<br>소셜 계정으로 로그인하면 점수 · 레벨 · 전적이 쌓이고 랭킹에 올라요.');
+    }
+    const node = openDialog('<h2 class="dialog-title">👤 마이페이지</h2><p class="dialog-note">불러오는 중…</p>');
+    const p = await loadProfile();
+    if (!$('#dialog') || $('#dialog') !== node) return; // 그 사이 닫힘
+    if (!p || p.guest) { node.firstElementChild.innerHTML = '<h2 class="dialog-title">👤 마이페이지</h2><p class="dialog-note">기록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.</p><div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>닫기</button></div>'; node.querySelector('[data-cancel]').addEventListener('click', closeDialog); return; }
+    const winRate = p.games ? `${Math.round((p.wins / p.games) * 100)}%` : '–';
+    const tile = (label, value, note = '') => `<div class="mp-tile"><small>${label}</small><strong>${value}</strong>${note ? `<span>${note}</span>` : ''}</div>`;
+    const tiles = [
+      tile('플레이', `${p.games}판`, `${p.wins}승`),
+      tile('승률', winRate),
+      tile('연승', `${p.streak}`, `최고 ${p.bestStreak}`),
+      tile('라운드 승리', `${p.roundWins}`),
+      tile('누적 점수', p.totalScore.toLocaleString('ko-KR')),
+      tile('한 경기 최고', p.bestMatchScore.toLocaleString('ko-KR')),
+      tile('낸 단어', `${p.words.toLocaleString('ko-KR')}개`),
+      tile('가장 긴 단어', p.longestWord ? escapeHtml(p.longestWord) : '–', p.longestWord ? `${p.longestWord.length}글자` : ''),
+      tile('최고 득점 단어', p.bestWord ? escapeHtml(p.bestWord) : '–', p.bestWord ? `+${p.bestWordPoints}점` : ''),
+      tile('미션 글자', `${p.missionHits}회`)
+    ].join('');
+    const recent = p.recent.length ? p.recent.map(item => `<li class="mp-match${item.won ? ' won' : ''}"><span class="mp-rank">${item.won ? '🏆' : `${item.rank}위`}</span><span class="mp-match-info">${item.players}명 · ${item.score}점</span><b class="mp-xp">+${item.xp} XP</b><time>${formatAgo(item.at)}</time></li>`).join('') : '<li class="mp-empty">아직 기록이 없어요. 친구와 한 판 해 보세요!</li>';
+    node.firstElementChild.classList.add('wide');
+    node.firstElementChild.innerHTML = `
+      <h2 class="dialog-title">👤 마이페이지</h2>
+      <div class="mp-head">${avatar(p.name || state.nickname)}<div><strong>${escapeHtml(p.name || state.nickname)}</strong><span>${lvBadge(p.level)} ${escapeHtml(p.title)}${p.rank ? ` · 전체 ${p.rank}위` : ''}</span></div></div>
+      <div class="xp-box mp-xp">
+        <div class="xp-top"><b>경험치</b><span>${p.max ? 'MAX' : `${p.xpInto.toLocaleString('ko-KR')} / ${p.xpNeed.toLocaleString('ko-KR')} XP`}</span></div>
+        ${xpBar(p.pct)}
+        <div class="xp-total">누적 ${p.xp.toLocaleString('ko-KR')} XP</div>
+      </div>
+      <div class="mp-grid">${tiles}</div>
+      <h3 class="mp-subtitle">최근 경기</h3>
+      <ul class="mp-matches">${recent}</ul>
+      <div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>닫기</button></div>`;
+    node.querySelectorAll('[data-cancel]').forEach(button => button.addEventListener('click', closeDialog));
+  }
+  async function openRanking() {
+    const node = openDialog('<h2 class="dialog-title">🏆 랭킹</h2><p class="dialog-note">불러오는 중…</p>');
+    const result = await request('ranking:top');
+    if ($('#dialog') !== node) return;
+    const card = node.firstElementChild;
+    card.classList.add('wide');
+    if (!result.ok) {
+      card.innerHTML = `<h2 class="dialog-title">🏆 랭킹</h2><p class="dialog-note">${escapeHtml(result.message || '랭킹을 불러오지 못했어요.')}</p><div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>닫기</button></div>`;
+    } else {
+      const mine = state.auth.user ? state.nickname : null;
+      const rows = result.list.length ? result.list.map(row => `<li class="rk-row${row.name === mine ? ' me' : ''}"><span class="rk-rank${row.rank <= 3 ? ` top${row.rank}` : ''}">${row.rank}</span>${avatar(row.name, true)}<span class="rk-name">${lvBadge(row.level)}${escapeHtml(row.name)}</span><span class="rk-stat">${row.wins}승 / ${row.games}판</span><b class="rk-xp">${row.xp.toLocaleString('ko-KR')} XP</b></li>`).join('') : '<li class="mp-empty">아직 랭킹에 오른 사람이 없어요. 첫 번째 주인공이 되어 보세요!</li>';
+      card.innerHTML = `
+        <h2 class="dialog-title">🏆 랭킹</h2>
+        <p class="dialog-note">누적 경험치 순이에요.${state.auth.user ? (result.myRank ? ` 내 순위는 <b>${result.myRank}위</b>.` : ' 한 판 이상 플레이하면 순위에 올라요.') : ' 로그인한 플레이어만 순위에 올라요.'}</p>
+        <ol class="rk-list">${rows}</ol>
+        <div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>닫기</button></div>`;
+    }
+    card.querySelectorAll('[data-cancel]').forEach(button => button.addEventListener('click', closeDialog));
+  }
+
   function summaryMarkup(room, isHost, animate) {
     const summary = room.summary;
     if (!summary) return '';
@@ -304,13 +413,14 @@
       ['가장 빠른 입력', summary.fastestWord ? `${(summary.fastestWord.elapsedMs / 1000).toFixed(1)}초` : '—', summary.fastestWord ? `${escapeHtml(summary.fastestWord.word)} · ${escapeHtml(summary.fastestWord.playerName)}` : ''],
       ['플레이 시간', summary.durationMs == null ? '—' : formatDuration(summary.durationMs), '']
     ].map(([label, value, note]) => `<div class="summary-stat"><small>${label}</small><strong>${value}</strong>${note ? `<span>${note}</span>` : ''}</div>`).join('');
+    const levels = new Map(room.players.map(player => [player.id, player.level]));
     const rows = summary.ranking.map(row => {
       const status = row.isWinner ? '최종 우승' : row.eliminated ? '퇴장' : '참가';
       const detail = `${status} · ${row.roundWins}승 · 단어 ${row.wordCount}개${row.longestWord ? ` · 최장 ${escapeHtml(row.longestWord)}` : ''}`;
       return `<li class="summary-row ${row.isWinner ? 'winner' : ''}">
         <span class="summary-rank">${row.rank}</span>
         ${avatar(row.name, true)}
-        <div class="summary-name">${escapeHtml(row.name)}${row.id === me ? '<em class="summary-me">나</em>' : ''}${row.isWinner ? ' 🏆' : ''}<small>${detail}</small></div>
+        <div class="summary-name">${lvBadge(levels.get(row.id))}${escapeHtml(row.name)}${row.id === me ? '<em class="summary-me">나</em>' : ''}${row.isWinner ? ' 🏆' : ''}<small>${detail}</small></div>
         <span class="summary-score">${row.score}<small>점</small></span>
       </li>`;
     }).join('');
@@ -322,6 +432,7 @@
           <h2 id="summary-title" class="summary-title">${winner ? `${escapeHtml(winner.name)} 승리!` : '게임 종료'}</h2>
           <p class="summary-sub">${winner ? '가장 많은 라운드를 이긴 플레이어예요.' : '이번 판의 결과를 확인해 보세요.'}</p>
           <div class="summary-stats">${tiles}</div>
+          ${rewardMarkup(state.rewards.get(room.gameId), animate)}
           <ol class="summary-ranking">${rows}</ol>
           <div class="summary-actions">
             <button id="summary-dismiss" class="ghost-button" type="button">닫기</button>
@@ -383,6 +494,12 @@
     state.hub.chat.push(message);
     if (state.hub.chat.length > 80) state.hub.chat.shift();
     appendChatLine(message);
+  });
+  socket.on('profile:reward', payload => {
+    state.rewards.set(payload.gameId, payload);
+    if (payload.leveledUp) { sound.play('win', 500); showToast(`레벨 업! Lv.${payload.after.level}`, 'success'); }
+    loadProfile();
+    if (state.room && state.room.state === 'finished') render(); // 결과 화면이 이미 떠 있으면 경험치를 바로 보여 준다.
   });
   socket.on('game:reaction', showReaction);
   socket.on('notice', payload => showToast(payload.message || '알 수 없는 오류가 발생했어요.', payload.type || 'info'));
@@ -563,6 +680,7 @@
     state.hub.total = result.users.total;
     state.hub.chat = result.chat;
     if (!state.room) mountHub();
+    loadProfile();
     return true;
   }
   async function leaveLobby() {
@@ -591,6 +709,8 @@
             <button id="hub-quick" class="hub-tab" type="button">⚡ 빠른 입장</button>
             <button id="hub-code" class="hub-tab" type="button">🔑 코드로 입장</button>
             <button id="hub-refresh" class="hub-tab" type="button">⟳ 새로고침</button>
+            <button id="hub-mypage" class="hub-tab" type="button">👤 마이페이지</button>
+            <button id="hub-ranking" class="hub-tab" type="button">🏆 랭킹</button>
             <span class="hub-tabs-spacer"></span>
             <span id="hub-summary" class="hub-summary"></span>
           </div>
@@ -624,6 +744,8 @@
       $('#hub-quick').addEventListener('click', quickJoin);
       $('#hub-code').addEventListener('click', openCodeDialog);
       $('#hub-refresh').addEventListener('click', refreshHub);
+      $('#hub-mypage').addEventListener('click', openMyPage);
+      $('#hub-ranking').addEventListener('click', openRanking);
       $('#hub-filter').addEventListener('change', event => { state.hub.onlyJoinable = event.target.checked; updateRooms(); });
       $('#hub-room-grid').addEventListener('click', event => {
         const card = event.target.closest('.room-card');
@@ -648,7 +770,7 @@
     patchList(list, state.hub.users, user => user.name, user => `
       <li class="hub-user${user.name === state.nickname ? ' me' : ''}">
         ${avatar(user.name, true)}
-        <span class="hub-user-name">${escapeHtml(user.name)}${user.name === state.nickname ? ' <em>(나)</em>' : ''}</span>
+        <span class="hub-user-name">${lvBadge(user.level)}${escapeHtml(user.name)}${user.name === state.nickname ? ' <em>(나)</em>' : ''}</span>
         <span class="hub-user-where ${user.where}">${whereLabel(user)}</span>
       </li>`, 'enter');
   }
@@ -680,12 +802,22 @@
     if (!body) return;
     const summary = $('#hub-summary');
     if (summary) summary.textContent = `방 ${state.hub.rooms.length}개 · 접속자 ${state.hub.total}명`;
+    const p = state.profile;
+    const known = p && !p.guest;
+    const level = known ? `
+      <div class="xp-box">
+        <div class="xp-top">${lvBadge(p.level)}<b>${escapeHtml(p.title)}</b><span>${p.max ? 'MAX' : `${p.xpInto.toLocaleString('ko-KR')} / ${p.xpNeed.toLocaleString('ko-KR')} XP`}</span></div>
+        ${xpBar(p.pct)}
+      </div>` : p && p.guest ? '<p class="hub-guest-note">게스트로 접속 중이에요. 로그인하면 점수와 레벨이 저장돼요.</p>' : '';
     const html = `
-      <div class="hub-profile-main">${avatar(state.nickname)}<div><strong>${escapeHtml(state.nickname)}</strong><small>로비에서 대기 중</small></div></div>
+      <div class="hub-profile-main">${avatar(state.nickname)}<div><strong>${escapeHtml(state.nickname)}</strong><small>${known ? `${p.games}전 ${p.wins}승` : '로비에서 대기 중'}</small></div></div>
+      ${level}
+      <button id="hub-profile-open" class="secondary-button button-full" type="button">${known ? '마이페이지' : '내 기록'}</button>
       <button id="hub-rename" class="ghost-button button-full" type="button">닉네임 변경</button>`;
     if (body.dataset.sig === html) return;
     body.dataset.sig = html;
     body.innerHTML = html;
+    $('#hub-profile-open').addEventListener('click', openMyPage);
     $('#hub-rename').addEventListener('click', leaveLobby);
   }
   function chatLineHtml(message) {
@@ -820,7 +952,7 @@
       <div class="player-row">
         ${avatar(player.name)}
         <div class="player-info">
-          <div class="player-name">${escapeHtml(player.name)} ${player.isHost ? '<span class="host-label">방장</span>' : ''}</div>
+          <div class="player-name">${lvBadge(player.level)}${escapeHtml(player.name)} ${player.isHost ? '<span class="host-label">방장</span>' : ''}</div>
           <div class="player-meta">${player.online ? '온라인 · 참가 중' : '연결 끊김'}</div>
         </div>
         <span class="player-status ${player.ready ? 'ready' : player.online ? '' : 'offline'}">${player.ready ? '준비 완료' : player.online ? '대기 중' : '오프라인'}</span>
@@ -955,7 +1087,7 @@
       const bump = prev && prev.scores[player.id] != null && player.score > prev.scores[player.id];
       return `<div class="score-row ${current ? 'current' : ''}${arrive ? ' arrive' : ''} ${player.eliminated ? 'eliminated' : ''}">
         ${avatar(player.name, true)}
-        <div class="score-name">${escapeHtml(player.name)}<span class="score-state">${status}${room.totalRounds > 1 ? ` · ${player.roundWins}승` : ''}</span></div>
+        <div class="score-name">${lvBadge(player.level)}${escapeHtml(player.name)}<span class="score-state">${status}${room.totalRounds > 1 ? ` · ${player.roundWins}승` : ''}</span></div>
         <span class="score-points${bump ? ' bump' : ''}">${player.score}</span>
       </div>`;
     }).join('');

@@ -116,10 +116,16 @@ function createAuth(options = {}) {
     return `u-${crypto.createHmac('sha256', secret).update(`${provider}:${accountId}`).digest('hex').slice(0, 40)}`;
   }
 
+  // 전적 저장용 키. playerId와 달리 SESSION_SECRET에 의존하지 않아, 비밀값을 바꿔도 같은 계정의 기록이 이어진다.
+  // 서버 안에서만 쓰고 클라이언트·다른 플레이어에게는 내보내지 않는다.
+  function statsKeyFor(provider, accountId) {
+    return `s-${crypto.createHash('sha256').update(`wordlink-stats:${provider}:${accountId}`).digest('hex').slice(0, 32)}`;
+  }
+
   function sessionFromCookieHeader(header) {
     const payload = verify(parseCookies(header)[SESSION_COOKIE]);
     if (!payload || !enabled.has(payload.p)) return null;
-    return { provider: payload.p, providerLabel: enabled.get(payload.p).label, suggestedName: payload.n || '', playerId: playerIdFor(payload.p, payload.a) };
+    return { provider: payload.p, providerLabel: enabled.get(payload.p).label, suggestedName: payload.n || '', playerId: playerIdFor(payload.p, payload.a), statsKey: statsKeyFor(payload.p, payload.a) };
   }
 
   function baseUrl(req) {
@@ -226,7 +232,7 @@ function createAuth(options = {}) {
     return true;
   }
 
-  return { handle, sessionFromCookieHeader, playerIdFor, enabledProviders: () => [...enabled.keys()] };
+  return { handle, sessionFromCookieHeader, playerIdFor, statsKeyFor, enabledProviders: () => [...enabled.keys()] };
 }
 
 module.exports = { createAuth, suggestNickname, safeNext, parseCookies, PROVIDERS };

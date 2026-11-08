@@ -6,6 +6,8 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { Server } = require('socket.io');
 const { createAuth } = require('./auth');
+const { createStoreFromEnv } = require('./store');
+const { levelInfo, titleFor, tierFor, calcMatchXp, matchEligible } = require('./progress');
 const {
   validateWord, normalizeWord, allowedFirstSyllables, buildStartIndex, buildRoundSummary, REACTION_EMOJIS,
   TOTAL_TIME_OPTIONS, ROUND_OPTIONS, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS,
@@ -36,7 +38,7 @@ const ROUND_BREAK_MS = 6000;      // 라운드 사이 쉬는 시간
 const REACTION_COOLDOWN_MS = 350; // 이모지 연타 제한
 
 // ---- 로비 ----
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const LOBBY_CHANNEL = 'wordlink:lobby';
 const LOBBY_CHAT_LIMIT = 60;      // 서버가 기억하는 최근 채팅 수
 const CHAT_MAX_LENGTH = 120;
@@ -50,6 +52,9 @@ const PASSWORD_BLOCK_MS = 30 * 1000;
 const publicFiles = new Set(['/index.html', '/styles.css', '/client.js', '/mascot.css', '/mascot.js']);
 
 const auth = createAuth();
+const store = createStoreFromEnv(); // 로그인한 계정의 경험치·전적 (파일 또는 PostgreSQL)
+const RANKING_LIMIT = 30;
+const RANKING_COOLDOWN_MS = 1000;
 
 const server = http.createServer((req, res) => {
   if (auth.handle(req, res)) return;
@@ -99,6 +104,29 @@ function resolvePlayerId(socket, value) {
   if (socket.data.auth) return socket.data.auth.playerId;
   const id = safePlayerId(value);
   return id.startsWith('u-') ? randomUUID() : id;
+}
+// 로그인한 소켓이면 프로필을 만들거나 갱신하고 레벨을 돌려준다. 게스트는 null (기록을 저장하지 않는다).
+function syncProfile(socket, name) {
+  const login = socket.data.auth;
+  if (!login) return null;
+  const profile = store.touch(login.statsKey, { name, provider: login.provider });
+  return profile ? profile.level : null;
+}
+// 클라이언트에 내보내는 내 프로필. 계정 키는 포함하지 않는다.
+function publicProfile(key) {
+  const profile = store.get(key);
+  if (!profile) return null;
+  const { level, levelInfo: info } = profile;
+  return {
+    name: profile.name, level, title: titleFor(level), tier: tierFor(level),
+    xp: profile.xp, xpInto: info.into, xpNeed: info.need, pct: info.pct, max: info.max,
+    rank: store.rankOf(key), createdAt: profile.createdAt,
+    games: profile.games, wins: profile.wins, roundWins: profile.roundWins,
+    totalScore: profile.totalScore, bestMatchScore: profile.bestMatchScore,
+    words: profile.words, longestWord: profile.longestWord, bestWord: profile.bestWord, bestWordPoints: profile.bestWordPoints,
+    missionHits: profile.missionHits, streak: profile.streak, bestStreak: profile.bestStreak,
+    recent: profile.recent
+  };
 }
 function safeCode(value) { return String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5); }
 function sendAck(callback, payload) { if (typeof callback === 'function') callback(payload); }
@@ -162,6 +190,7 @@ function roomSnapshot(room) {
       roundScore: player.roundScore,
       roundWins: player.roundWins,
       eliminated: player.eliminated,
+      level: player.level ?? null,
       isHost: player.id === room.hostId
     })),
     currentPlayerId: room.currentPlayerId,
@@ -228,7 +257,7 @@ function userList() {
     const code = io.sockets.sockets.get(socketId)?.data.roomCode;
     const room = code ? rooms.get(code) : null;
     const where = room ? (room.state === 'lobby' ? 'waiting' : 'playing') : 'lobby';
-    const item = { name: entry.name, where, roomNumber: room ? room.number : null };
+    const item = { name: entry.name, level: entry.level ?? null, where, roomNumber: room ? room.number : null };
     const prev = byPlayer.get(entry.playerId);
     if (!prev || (prev.where === 'lobby' && where !== 'lobby')) byPlayer.set(entry.playerId, item);
   }
@@ -332,12 +361,46 @@ function finishMatch(room) {
     startedAt: room.startedAt,
     endedAt: Date.now()
   });
+  awardMatch(room); // 경험치·전적 반영 (방 스냅샷보다 먼저 보내 결과 화면에서 바로 쓸 수 있게 한다)
   broadcast(room);
   if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
   room.cleanupTimer = setTimeout(() => {
     if (rooms.get(room.code) === room) removeRoom(room);
   }, 30 * 60 * 1000);
   room.cleanupTimer.unref?.();
+}
+// 끝난 경기의 경험치·전적을 로그인한 플레이어에게만 반영한다. (게스트는 저장하지 않는다)
+// 지급 조건: 경기 전체 단어 수와 참여자 수가 기준 이상이고, 중간에 나가지 않았으며, 본인이 단어를 1개 이상 냈을 것.
+function awardMatch(room) {
+  if (room.awardedGameId === room.gameId) return; // 같은 경기를 두 번 정산하지 않는다.
+  room.awardedGameId = room.gameId;
+  const summary = room.summary;
+  if (!summary) return;
+  const entries = room.matchWords.filter(item => item.type === 'word');
+  const eligible = matchEligible({ totalWords: entries.length, contributors: new Set(entries.map(item => item.playerId)).size });
+  const headcount = livePlayers(room).length;
+  for (const row of summary.ranking) {
+    const player = getPlayer(room, row.id);
+    if (!player || !player.statsKey || player.left) continue;
+    const words = entries.filter(item => item.playerId === player.id);
+    const send = payload => { if (player.socketId) io.to(player.socketId).emit('profile:reward', { gameId: room.gameId, ...payload }); };
+    if (!eligible) { send({ skipped: 'short' }); continue; }
+    if (!words.length) { send({ skipped: 'noword' }); continue; }
+    const xp = calcMatchXp({ score: row.score, roundWins: row.roundWins, rank: row.rank, players: headcount, won: row.isWinner });
+    const result = store.recordMatch(player.statsKey, { xp: xp.total, score: row.score, roundWins: row.roundWins, rank: row.rank, players: headcount, won: row.isWinner, words });
+    if (!result) continue;
+    player.level = result.after.level;
+    const entry = player.socketId ? presence.get(player.socketId) : null;
+    if (entry) entry.level = player.level;
+    send({
+      xp: xp.total, parts: xp.parts,
+      before: { level: result.before.level, pct: result.before.pct },
+      after: { level: result.after.level, pct: result.after.pct, into: result.after.into, need: result.after.need, max: result.after.max },
+      title: titleFor(result.after.level),
+      leveledUp: result.after.level > result.before.level,
+      newTitle: titleFor(result.after.level) !== titleFor(result.before.level)
+    });
+  }
 }
 function findNextActiveIndex(room, fromIndex) {
   const count = room.playerOrder.length;
@@ -473,7 +536,7 @@ function attachPlayer(room, player, socket) {
   socket.data.playerId = player.id;
   socket.data.roomCode = room.code;
   socket.leave(LOBBY_CHANNEL);
-  presence.set(socket.id, { playerId: player.id, name: player.name });
+  presence.set(socket.id, { playerId: player.id, name: player.name, level: player.level ?? null });
   if (room.idleTimer) { clearTimeout(room.idleTimer); room.idleTimer = null; }
   socket.join(roomChannel(room.code));
   broadcast(room);
@@ -488,6 +551,8 @@ function performJoin(socket, room, { name, playerId, password }) {
       if (oldSocket) oldSocket.leave(roomChannel(room.code));
     }
     existing.name = name;
+    existing.statsKey = socket.data.auth?.statsKey || null;
+    existing.level = syncProfile(socket, name);
     attachPlayer(room, existing, socket);
     return { ok: true, room: roomSnapshot(room), playerId };
   }
@@ -503,7 +568,7 @@ function performJoin(socket, room, { name, playerId, password }) {
     }
     socket.data.pwFails = 0;
   }
-  const player = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0 };
+  const player = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0, statsKey: socket.data.auth?.statsKey || null, level: syncProfile(socket, name) };
   room.players.set(playerId, player);
   room.playerOrder.push(playerId);
   attachPlayer(room, player, socket);
@@ -518,7 +583,7 @@ function findRoomPlayer(playerId, code) {
 
 io.on('connection', socket => {
   const login = auth.sessionFromCookieHeader(socket.handshake.headers.cookie);
-  if (login) socket.data.auth = { provider: login.provider, playerId: login.playerId };
+  if (login) socket.data.auth = { provider: login.provider, playerId: login.playerId, statsKey: login.statsKey };
   socket.emit('server:hello', { dictionarySize: dictionary.size, version: VERSION });
 
   // ---------- 로비 ----------
@@ -534,7 +599,7 @@ io.on('connection', socket => {
         return sendAck(callback, { ok: false, code: 'NAME_TAKEN', message: '지금 접속 중인 사람이 쓰는 닉네임이에요. 다른 닉네임을 사용해 주세요.' });
       }
     }
-    presence.set(socket.id, { playerId, name });
+    presence.set(socket.id, { playerId, name, level: syncProfile(socket, name) });
     socket.join(LOBBY_CHANNEL);
     scheduleLobbyBroadcast();
     sendAck(callback, { ok: true, playerId, rooms: roomList(), users: userList(), chat: lobbyChat.slice(-LOBBY_CHAT_LIMIT) });
@@ -568,6 +633,21 @@ io.on('connection', socket => {
     sendAck(callback, { ok: true });
   });
 
+  // ---------- 마이페이지 · 랭킹 ----------
+  socket.on('profile:me', (payload = {}, callback) => {
+    const login = socket.data.auth;
+    if (!login) return sendAck(callback, { ok: true, guest: true });
+    if (!store.has(login.statsKey)) store.touch(login.statsKey, { provider: login.provider });
+    sendAck(callback, { ok: true, guest: false, profile: publicProfile(login.statsKey) });
+  });
+  socket.on('ranking:top', (payload = {}, callback) => {
+    const now = Date.now();
+    if (now - (socket.data.lastRankingAt || 0) < RANKING_COOLDOWN_MS) return sendAck(callback, { ok: false, throttled: true, message: '잠시 후 다시 확인해 주세요.' });
+    socket.data.lastRankingAt = now;
+    const login = socket.data.auth;
+    sendAck(callback, { ok: true, list: store.top(RANKING_LIMIT), myRank: login ? store.rankOf(login.statsKey) : null });
+  });
+
   // ---------- 방 만들기 · 참가 ----------
   socket.on('room:create', (payload = {}, callback) => {
     try {
@@ -592,7 +672,7 @@ io.on('connection', socket => {
       const title = safeTitle(payload.title, `${name}님의 방`);
       const playerId = resolvePlayerId(socket, payload.playerId);
       const code = createCode();
-      const host = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0 };
+      const host = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0, statsKey: socket.data.auth?.statsKey || null, level: syncProfile(socket, name) };
       const room = createRoomObject(code, host, { title, password, settings });
       rooms.set(code, room);
       attachPlayer(room, host, socket);
@@ -845,14 +925,21 @@ io.on('connection', socket => {
   });
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`WORDLINK v${VERSION} listening on http://${HOST}:${PORT}`);
-  console.log(`Dictionary: ${dictionary.size.toLocaleString('en-US')} words`);
+// 저장된 기록을 모두 불러온 뒤에 접속을 받는다.
+store.ready.then(() => {
+  server.listen(PORT, HOST, () => {
+    console.log(`WORDLINK v${VERSION} listening on http://${HOST}:${PORT}`);
+    console.log(`Dictionary: ${dictionary.size.toLocaleString('en-US')} words`);
+    console.log(`Profiles: ${store.size()} loaded`);
+  });
+}).catch(error => {
+  console.error('[store] 기록 저장소를 열 수 없어 서버를 시작하지 않습니다:', error.message);
+  process.exit(1);
 });
 
 function shutdown() {
   for (const room of rooms.values()) { clearTurnTimer(room); clearRoundTimers(room); }
-  server.close(() => process.exit(0));
+  store.flush().finally(() => server.close(() => process.exit(0)));
   setTimeout(() => process.exit(1), 5000).unref();
 }
 process.on('SIGINT', shutdown);

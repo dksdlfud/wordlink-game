@@ -23,3 +23,11 @@ services:
         sync: false
       - key: DISCORD_CLIENT_SECRET
         sync: false
+      # 기록 저장(경험치·전적). 아래 중 하나를 고르세요. 둘 다 없으면 서버 디스크(./data)에 저장되는데,
+      # Render 무료 플랜은 재배포·재시작 때 디스크가 초기화되어 기록도 함께 사라집니다.
+      #  (1) 외부 PostgreSQL (Neon · Supabase 등 무료 플랜 가능) — 연결 문자열을 입력
+      - key: DATABASE_URL
+        sync: false
+      #  (2) 유료 플랜 + 영구 디스크: 서비스에 Disk(예: mount /var/data)를 붙이고 DATA_DIR=/var/data 로 설정
+      # - key: DATA_DIR
+      #   value: /var/data
