@@ -13,7 +13,8 @@
   const REACTIONS = ['👍', '😂', '😮', '🔥', '👏', '😭'];
   const REACTION_COOLDOWN_MS = 350;
   const TOTAL_TIME_OPTIONS = [20, 40, 60, 80, 100, 150, 500];
-  const ROUND_OPTIONS = [3, 5, 7];
+  const MIN_ROUNDS = 1;
+  const MAX_ROUNDS = 25;   // 서버(game-rules.js)와 같은 값으로 유지
 
   const state = {
     socket: null,
@@ -515,6 +516,14 @@
     appendChatLine(message);
   });
   socket.on('room:chat', appendRoomChat);
+  // 방장에게 추방당하면 방 정보를 지우고 로비로 돌아간다.
+  socket.on('room:kicked', async payload => {
+    if (!state.session || payload.code !== state.session.code) return;
+    clearSession();
+    history.replaceState({}, '', location.pathname);
+    showToast(payload.message || '방장에 의해 추방되었어요.', 'error');
+    if (state.nickname) { if (!(await enterLobby(state.nickname))) renderHome(); } else renderHome();
+  });
   socket.on('profile:reward', payload => {
     state.rewards.set(payload.gameId, payload);
     if (payload.leveledUp) { sound.play('win', 500); showToast(`레벨 업! Lv.${payload.after.level}`, 'success'); }
@@ -788,7 +797,7 @@
     $('#hub-user-count').textContent = `${state.hub.total}명`;
     if (!state.hub.users.length) { list.innerHTML = '<li class="hub-empty">접속자가 없어요.</li>'; return; }
     patchList(list, state.hub.users, user => user.name, user => `
-      <li class="hub-user${user.name === state.nickname ? ' me' : ''}">
+      <li class="hub-user${user.name === state.nickname ? ' me' : ''}" title="${escapeHtml(user.name)}">
         ${avatar(user.name, true)}
         <span class="hub-user-name">${lvBadge(user.level)}${escapeHtml(user.name)}${user.name === state.nickname ? ' <em>(나)</em>' : ''}</span>
         <span class="hub-user-where ${user.where}">${whereLabel(user)}</span>
@@ -1024,7 +1033,7 @@
         <input id="create-password" class="text-input" type="text" maxlength="8" autocomplete="off" placeholder="비밀번호 없음">
         <div class="dialog-grid">
           <div><label class="field-label" for="create-max">최대 인원</label><select id="create-max" class="select-input">${options([2, 3, 4, 5, 6, 7, 8], 8, '명')}</select></div>
-          <div><label class="field-label" for="create-rounds">라운드 수</label><select id="create-rounds" class="select-input">${options(ROUND_OPTIONS, 3, '라운드')}</select></div>
+          <div><label class="field-label" for="create-rounds">라운드 수 <small class="field-hint">(${MIN_ROUNDS}~${MAX_ROUNDS})</small></label><input id="create-rounds" class="text-input" type="number" inputmode="numeric" min="${MIN_ROUNDS}" max="${MAX_ROUNDS}" step="1" value="3"></div>
           <div><label class="field-label" for="create-total">라운드 총 시간</label><select id="create-total" class="select-input">${options(TOTAL_TIME_OPTIONS, 60, '초')}</select></div>
           <div><label class="field-label" for="create-turn">턴 제한 시간</label><select id="create-turn" class="select-input">${options([10, 15, 20, 30], 15, '초')}</select></div>
           <div><label class="field-label" for="create-oneshot">한방 단어 <small class="field-hint">(이어 갈 단어가 없는 단어)</small></label><select id="create-oneshot" class="select-input"><option value="true" selected>허용</option><option value="false">금지</option></select></div>
@@ -1035,13 +1044,15 @@
     $('#create-form', node).addEventListener('submit', async event => {
       event.preventDefault();
       const submit = $('#create-submit', node);
+      const rounds = parseRounds($('#create-rounds', node).value);
+      if (rounds === null) { showToast(`라운드 수는 ${MIN_ROUNDS}~${MAX_ROUNDS} 사이의 정수로 입력해 주세요.`, 'error'); $('#create-rounds', node).focus(); return; }
       submit.disabled = true;
       const result = await request('room:create', {
         name: state.nickname, playerId: playerId(),
         title: $('#create-title', node).value,
         password: $('#create-password', node).value,
         maxPlayers: Number($('#create-max', node).value),
-        rounds: Number($('#create-rounds', node).value),
+        rounds,
         totalSeconds: Number($('#create-total', node).value),
         turnSeconds: Number($('#create-turn', node).value),
         allowOneShot: $('#create-oneshot', node).value === 'true'
@@ -1054,6 +1065,7 @@
 
   function renderLobby(room) {
     const sameScreen = enterScreen('lobby');
+    const roundsHadFocus = document.activeElement?.id === 'setting-rounds'; // 라운드 수를 입력하던 중에 화면이 갱신돼도 입력을 유지한다.
     captureRoomChat();
     document.body.classList.remove('modal-open');
     const mine = room.players.find(player => player.id === state.session.playerId);
@@ -1067,6 +1079,7 @@
           <div class="player-meta">${player.online ? '온라인 · 참가 중' : '연결 끊김'}</div>
         </div>
         <span class="player-status ${player.ready ? 'ready' : player.online ? '' : 'offline'}">${player.ready ? '준비 완료' : player.online ? '대기 중' : '오프라인'}</span>
+        ${isHost && player.id !== state.session.playerId ? `<button type="button" class="kick-button" data-kick="${escapeHtml(player.id)}" data-name="${escapeHtml(player.name)}" title="${escapeHtml(player.name)}님을 추방" aria-label="${escapeHtml(player.name)}님을 추방">추방</button>` : ''}
       </div>`).join('');
     const emptySlots = Math.max(0, Math.min(room.settings.maxPlayers - room.players.length, 3));
     const settingsContent = isHost ? `
@@ -1082,14 +1095,16 @@
       <div class="setting-block">
         <label class="field-label" for="setting-time">턴 제한 시간 <small class="field-hint">(라운드가 갈수록 줄어요)</small></label>
         <select id="setting-time" class="select-input"><option value="10" ${room.settings.turnSeconds === 10 ? 'selected' : ''}>10초</option><option value="15" ${room.settings.turnSeconds === 15 ? 'selected' : ''}>15초</option><option value="20" ${room.settings.turnSeconds === 20 ? 'selected' : ''}>20초</option><option value="30" ${room.settings.turnSeconds === 30 ? 'selected' : ''}>30초</option></select>
+        <p class="setting-note turn-plan-line">현재 설정: 라운드별 ${formatTurnPlan(room.turnPlan)}</p>
       </div>
       <div class="setting-block">
         <label class="field-label" for="setting-total">라운드 총 시간</label>
         <select id="setting-total" class="select-input">${TOTAL_TIME_OPTIONS.map(sec => `<option value="${sec}" ${room.settings.totalSeconds === sec ? 'selected' : ''}>${sec}초</option>`).join('')}</select>
       </div>
       <div class="setting-block">
-        <label class="field-label" for="setting-rounds">라운드 수</label>
-        <select id="setting-rounds" class="select-input">${ROUND_OPTIONS.map(num => `<option value="${num}" ${room.settings.rounds === num ? 'selected' : ''}>${num}라운드</option>`).join('')}</select>
+        <label class="field-label" for="setting-rounds">라운드 수 <small class="field-hint">(${MIN_ROUNDS}~${MAX_ROUNDS})</small></label>
+        <input id="setting-rounds" class="text-input" type="number" inputmode="numeric" min="${MIN_ROUNDS}" max="${MAX_ROUNDS}" step="1" value="${room.settings.rounds}">
+        <p class="setting-note">${MIN_ROUNDS}~${MAX_ROUNDS}라운드 중 원하는 만큼 정할 수 있어요.</p>
       </div>
       <div class="setting-block">
         <label class="field-label" for="setting-oneshot">한방 단어 <small class="field-hint">(이어 갈 단어가 없는 단어)</small></label>
@@ -1105,6 +1120,7 @@
       <div class="setting-block"><label class="field-label">턴 제한 시간</label><div class="read-only-setting">${room.settings.turnSeconds}초</div></div>
       <div class="setting-block"><label class="field-label">라운드 총 시간</label><div class="read-only-setting">${room.settings.totalSeconds}초</div></div>
       <div class="setting-block"><label class="field-label">라운드 수</label><div class="read-only-setting">${room.settings.rounds}라운드</div></div>
+      <div class="setting-block"><label class="field-label">라운드별 턴 시간</label><div class="read-only-setting turn-plan-line">${formatTurnPlan(room.turnPlan)}</div></div>
       <div class="setting-block"><label class="field-label">한방 단어</label><div class="read-only-setting">${room.settings.allowOneShot === false ? '금지' : '허용'}</div></div>
       <div class="setting-block"><label class="field-label">최대 인원</label><div class="read-only-setting">${room.settings.maxPlayers}명</div></div>
       <p class="setting-note">대기실 설정은 방장만 변경할 수 있어요.</p>`;
@@ -1141,19 +1157,34 @@
     $('#leave-room').addEventListener('click', leaveRoom);
     $('#copy-invite').addEventListener('click', copyInvite);
     if ($('#apply-settings')) $('#apply-settings').addEventListener('click', applySettings);
+    app.querySelectorAll('[data-kick]').forEach(button => button.addEventListener('click', () => kickPlayer(button.dataset.kick, button.dataset.name)));
     if ($('#start-game')) $('#start-game').addEventListener('click', startGame);
+    const roundsInput = $('#setting-rounds');
+    if (roundsInput) {
+      if (state.roundsDraft && state.roundsDraft.code === room.code) roundsInput.value = state.roundsDraft.value;
+      roundsInput.addEventListener('input', () => { state.roundsDraft = { code: room.code, value: roundsInput.value }; });
+      if (roundsHadFocus) roundsInput.focus();
+    }
     mountRoomChat();
     settleScreen(sameScreen);
   }
   async function applySettings() {
+    const rounds = parseRounds($('#setting-rounds').value);
+    if (rounds === null) { showToast(`라운드 수는 ${MIN_ROUNDS}~${MAX_ROUNDS} 사이의 정수로 입력해 주세요.`, 'error'); $('#setting-rounds').focus(); return; }
     const result = await request('room:settings', {
       code: state.room.code, playerId: state.session.playerId,
       turnSeconds: Number($('#setting-time').value), maxPlayers: Number($('#setting-players').value),
-      totalSeconds: Number($('#setting-total').value), rounds: Number($('#setting-rounds').value),
+      totalSeconds: Number($('#setting-total').value), rounds,
       allowOneShot: $('#setting-oneshot').value === 'true',
       title: $('#setting-title').value, password: $('#setting-password').value, clearPassword: Boolean($('#setting-clear-pw')?.checked)
     });
+    if (result.ok) state.roundsDraft = null;
     showToast(result.ok ? '게임 설정을 적용했어요.' : result.message, result.ok ? 'success' : 'error');
+  }
+  async function kickPlayer(targetId, targetName) {
+    if (!state.room || !window.confirm(`${targetName}님을 이 방에서 추방할까요?\n추방된 플레이어는 이 방에 다시 들어올 수 없어요.`)) return;
+    const result = await request('room:kick', { code: state.room.code, playerId: state.session.playerId, targetId });
+    showToast(result.ok ? `${targetName}님을 추방했어요.` : result.message, result.ok ? 'success' : 'error');
   }
   async function startGame() {
     const result = await request('room:start', { code: state.room.code, playerId: state.session.playerId });
@@ -1223,7 +1254,7 @@
     const breakContent = onBreak && room.roundResult ? (() => {
       const result = room.roundResult;
       const board = result.scores.map(row => `${escapeHtml(row.name)} ${row.roundScore}점`).join(' · ');
-      return `<div class="finished-banner round-banner"><div class="trophy">${result.winnerId ? '🏁' : '🤝'}</div><h2>ROUND ${result.round} ${result.winnerId ? `— ${escapeHtml(result.winnerName)} 승리!` : '— 무승부'}</h2><p>${board}</p><p class="break-count-line"><span id="break-count">–</span>초 뒤 ROUND ${room.round + 1}/${room.totalRounds} 시작</p></div>`;
+      return `<div class="finished-banner round-banner"><div class="trophy">${result.winnerId ? '🏁' : '🤝'}</div><h2>ROUND ${result.round} ${result.winnerId ? `— ${escapeHtml(result.winnerName)} 승리!` : '— 무승부'}</h2><p>${board}</p><p class="break-count-line"><span id="break-count">–</span>초 뒤 ROUND ${room.round + 1}/${room.totalRounds} 시작</p><p class="break-turn-line">턴 제한 시간 ${room.turnPlan[room.round - 1] ?? room.turnSeconds}초 → <b>${room.turnPlan[room.round] ?? room.turnSeconds}초</b></p></div>`;
     })() : '';
     const turnName = onBreak ? '다음 라운드를 준비해요' : isPlaying ? (myTurn ? '내 차례예요!' : `${escapeHtml(room.currentPlayerName)}님의 차례`) : '게임이 종료되었어요';
     const allowed = (room.allowedSyllables && room.allowedSyllables.length) ? room.allowedSyllables : (room.lastSyllable ? [room.lastSyllable] : []);
@@ -1276,7 +1307,7 @@
             ${finished && room.summary ? '<button id="open-summary" class="secondary-button">결과 요약 보기</button>' : ''}
             ${finished && isHost ? '<button id="rematch" class="primary-button">다시 플레이 ↗</button>' : finished ? '<button class="secondary-button" disabled>방장이 다시 시작할 수 있어요</button>' : ''}
           </div>
-          <div class="game-top-info"><span class="game-round">${room.round}/${room.totalRounds} 라운드${isPlaying ? ' · <span id="round-clock">–</span>' : ''}</span><span class="game-code">방 ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존</span></div>
+          <div class="game-top-info"><span class="game-round">${room.round}/${room.totalRounds} 라운드${isPlaying ? ` · <span id="round-clock">–</span><span class="round-total" title="라운드 총 시간"> / ${formatClock(room.settings.totalSeconds * 1000)}</span>` : ''}</span>${isPlaying ? `<span class="game-turnplan" title="라운드가 지날수록 턴 제한 시간이 줄어요">턴 ${room.turnSeconds}초${room.round < room.totalRounds ? ` <i>→</i> 다음 라운드 ${room.turnPlan[room.round] ?? room.turnSeconds}초` : ' · 마지막 라운드'}</span>` : ''}<span class="game-code">방 ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존</span></div>
         </div>
         <div class="game-body">
         <div class="game-left">
@@ -1464,6 +1495,19 @@
   function formatClock(ms) {
     const total = Math.max(0, Math.ceil(ms / 1000));
     return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  }
+  // 라운드별 턴 제한 시간 목록을 한 줄로 보여 준다. 예) [15,13,11,9,7,5,5,5] → '15 → 13 → 11 → 9 → 7 → 5초 (이후 유지)'
+  function formatTurnPlan(plan) {
+    if (!Array.isArray(plan) || !plan.length) return '';
+    const last = plan[plan.length - 1];
+    const firstLast = plan.indexOf(last);
+    const shown = plan.slice(0, firstLast + 1);
+    return `${shown.join(' → ')}초${plan.length - 1 > firstLast ? ' (이후 유지)' : ''}`;
+  }
+  // 입력한 라운드 수를 검사한다. 올바르면 정수, 아니면 null.
+  function parseRounds(value) {
+    const number = Number(String(value).trim());
+    return Number.isInteger(number) && number >= MIN_ROUNDS && number <= MAX_ROUNDS ? number : null;
   }
   // 타이머는 매 프레임(rAF) 계산해 GPU 변환(translate)으로만 움직인다. 숫자는 값이 바뀔 때만 다시 쓴다.
   const clockView = { fill: null, number: null, round: null, count: null, frac: 1, turnKey: '', from: 1, t0: 0, applied: '' };

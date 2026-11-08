@@ -92,7 +92,13 @@ function validateWord(value, dictionary, usedWords, requiredFirst = '', options 
 // ── 라운드제 · 미션 글자 ─────────────────────────────────
 // 라운드 총 시간(초). 방장이 대기실에서 고른다.
 const TOTAL_TIME_OPTIONS = [20, 40, 60, 80, 100, 150, 500];
-const ROUND_OPTIONS = [3, 5, 7];
+// 라운드 수는 방장이 직접 정한다. (1~25)
+const MIN_ROUNDS = 1;
+const MAX_ROUNDS = 25;
+const ROUND_PRESETS = [3, 5, 7, 10, 15, 25];
+function isValidRounds(value) {
+  return Number.isInteger(value) && value >= MIN_ROUNDS && value <= MAX_ROUNDS;
+}
 const DEFAULT_TOTAL_SECONDS = 60;
 const DEFAULT_ROUNDS = 3;
 const MIN_TURN_SECONDS = 5;
@@ -103,6 +109,11 @@ function turnSecondsForRound(baseSeconds, roundIndex) {
   const base = Number(baseSeconds) || 15;
   const factor = Math.max(0.35, 1 - 0.13 * Math.max(0, roundIndex));
   return Math.max(MIN_TURN_SECONDS, Math.min(base, Math.round(base * factor)));
+}
+
+// 경기 전체의 라운드별 턴 제한 시간 목록. 예) 15초 · 7라운드 → [15, 13, 11, 9, 7, 5, 5]
+function turnPlanFor(baseSeconds, rounds) {
+  return Array.from({ length: Math.max(0, Number(rounds) || 0) }, (_, index) => turnSecondsForRound(baseSeconds, index));
 }
 
 // 사전에서 너무 드물지도, 너무 흔하지도 않은 글자만 미션 후보로 모은다.
@@ -181,6 +192,6 @@ function buildRoundSummary({ players, words, winnerId = null, startedAt = null, 
 
 module.exports = {
   normalizeWord, validateWord, allowedFirstSyllables, buildStartIndex, isOneShotWord, buildRoundSummary, HANGUL_WORD, REACTION_EMOJIS,
-  TOTAL_TIME_OPTIONS, ROUND_OPTIONS, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS, MIN_TURN_SECONDS,
+  TOTAL_TIME_OPTIONS, MIN_ROUNDS, MAX_ROUNDS, ROUND_PRESETS, isValidRounds, turnPlanFor, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS, MIN_TURN_SECONDS,
   turnSecondsForRound, buildMissionPool, pickMissionLetter, hasMissionLetter, countMissionLetters, calcScore
 };

@@ -10,7 +10,7 @@ const { createStoreFromEnv } = require('./store');
 const { levelInfo, titleFor, tierFor, calcMatchXp, matchEligible } = require('./progress');
 const {
   validateWord, normalizeWord, allowedFirstSyllables, buildStartIndex, buildRoundSummary, REACTION_EMOJIS,
-  TOTAL_TIME_OPTIONS, ROUND_OPTIONS, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS,
+  TOTAL_TIME_OPTIONS, MIN_ROUNDS, MAX_ROUNDS, isValidRounds, turnPlanFor, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS,
   turnSecondsForRound, buildMissionPool, pickMissionLetter, hasMissionLetter, countMissionLetters, calcScore
 } = require('./game-rules');
 
@@ -182,6 +182,7 @@ function roomSnapshot(room) {
     nextRoundAt: room.nextRoundAt,
     roundResult: room.roundResult,
     turnSeconds: room.turnSeconds,
+    turnPlan: turnPlanFor(room.settings.turnSeconds, room.settings.rounds), // 라운드별 턴 제한 시간 (다음 라운드에 얼마나 빨라지는지 보여 주기 위함)
     turnDurationMs: room.turnDurationMs,
     totalWords: room.matchWordCount,
     summary: room.state === 'finished' ? room.summary : null,
@@ -498,6 +499,7 @@ function createRoomObject(code, host, options = {}) {
     title: options.title || `${host.name}님의 방`,
     password: options.password || '',
     hostId: host.id,
+    banned: new Set(), // 방장이 추방한 playerId — 이 방에는 다시 들어올 수 없다.
     state: 'lobby',
     settings,
     players: new Map([[host.id, host]]),
@@ -562,6 +564,7 @@ function performJoin(socket, room, { name, playerId, password }) {
     attachPlayer(room, existing, socket);
     return { ok: true, room: roomSnapshot(room), playerId };
   }
+  if (room.banned.has(playerId)) return { ok: false, code: 'KICKED', message: '이 방에서 추방되어 다시 입장할 수 없어요.' };
   if (room.state !== 'lobby') return { ok: false, code: 'STARTED', message: '게임이 이미 시작된 방에는 새로 참가할 수 없어요.' };
   if (orderedPlayers(room).length >= room.settings.maxPlayers) return { ok: false, code: 'FULL', message: '방 인원이 가득 찼어요.' };
   if (room.password) {
@@ -671,7 +674,7 @@ io.on('connection', socket => {
       if (![10, 15, 20, 30].includes(settings.turnSeconds)) return sendAck(callback, { ok: false, message: '제한 시간 설정이 올바르지 않아요.' });
       if (![2, 3, 4, 5, 6, 7, 8].includes(settings.maxPlayers)) return sendAck(callback, { ok: false, message: '최대 인원 설정이 올바르지 않아요.' });
       if (!TOTAL_TIME_OPTIONS.includes(settings.totalSeconds)) return sendAck(callback, { ok: false, message: '라운드 총 시간 설정이 올바르지 않아요.' });
-      if (!ROUND_OPTIONS.includes(settings.rounds)) return sendAck(callback, { ok: false, message: '라운드 수 설정이 올바르지 않아요.' });
+      if (!isValidRounds(settings.rounds)) return sendAck(callback, { ok: false, message: `라운드 수는 ${MIN_ROUNDS}~${MAX_ROUNDS} 사이의 정수로 입력해 주세요.` });
       if (settings.allowOneShot === null) return sendAck(callback, { ok: false, message: '한방 단어 설정이 올바르지 않아요.' });
       const password = safePassword(payload.password);
       if (password === null) return sendAck(callback, { ok: false, message: '비밀번호는 영문·숫자 1~8자로 입력해 주세요.' });
@@ -704,8 +707,9 @@ io.on('connection', socket => {
   socket.on('room:quick', (payload = {}, callback) => {
     const name = safeName(payload.name);
     if (!name) return sendAck(callback, { ok: false, message: '닉네임은 한글·영문·숫자 2~12자로 입력해 주세요.' });
+    const quickId = resolvePlayerId(socket, payload.playerId);
     const candidates = [...rooms.values()]
-      .filter(room => room.state === 'lobby' && !room.password && livePlayers(room).length < room.settings.maxPlayers && orderedPlayers(room).some(player => player.online))
+      .filter(room => room.state === 'lobby' && !room.banned.has(quickId) && !room.password && livePlayers(room).length < room.settings.maxPlayers && orderedPlayers(room).some(player => player.online))
       .sort((a, b) => livePlayers(b).length - livePlayers(a).length || a.number - b.number);
     const room = candidates[0];
     if (!room) return sendAck(callback, { ok: false, code: 'NO_ROOM', message: '지금 바로 들어갈 수 있는 방이 없어요. 새 방을 만들어 보세요!' });
@@ -739,6 +743,32 @@ io.on('connection', socket => {
     sendAck(callback, { ok: true });
   });
 
+  // 방장이 대기실에서 원하지 않는 플레이어를 내보낸다. 추방된 사람은 같은 방에 다시 들어올 수 없다.
+  socket.on('room:kick', (payload = {}, callback) => {
+    const code = safeCode(payload.code);
+    const room = rooms.get(code);
+    const player = room && playerForSocket(room, String(payload.playerId ?? ''), socket);
+    if (!room || !player) return sendAck(callback, { ok: false, message: '방에 연결되어 있지 않아요.' });
+    if (player.id !== room.hostId) return sendAck(callback, { ok: false, message: '방장만 플레이어를 추방할 수 있어요.' });
+    if (room.state !== 'lobby') return sendAck(callback, { ok: false, message: '게임이 시작되기 전 대기실에서만 추방할 수 있어요.' });
+    const targetId = String(payload.targetId ?? '');
+    if (targetId === player.id) return sendAck(callback, { ok: false, message: '자기 자신은 추방할 수 없어요.' });
+    const target = room.players.get(targetId);
+    if (!target) return sendAck(callback, { ok: false, message: '이미 방을 나간 플레이어예요.' });
+    room.banned.add(target.id);
+    room.players.delete(target.id);
+    room.playerOrder = room.playerOrder.filter(id => id !== target.id);
+    const targetSocket = target.socketId ? io.sockets.sockets.get(target.socketId) : null;
+    if (targetSocket) {
+      targetSocket.leave(roomChannel(code));
+      targetSocket.data.roomCode = null;
+      targetSocket.emit('room:kicked', { code, message: `방장에 의해 ‘${room.title}’ 방에서 추방되었어요.` });
+    }
+    broadcast(room);
+    scheduleLobbyBroadcast();
+    sendAck(callback, { ok: true });
+  });
+
   socket.on('room:settings', (payload = {}, callback) => {
     const code = safeCode(payload.code);
     const room = rooms.get(code);
@@ -753,7 +783,7 @@ io.on('connection', socket => {
     if (allowOneShot === null) return sendAck(callback, { ok: false, message: '한방 단어 설정이 올바르지 않아요.' });
     if (![10, 15, 20, 30].includes(turnSeconds)) return sendAck(callback, { ok: false, message: '제한 시간 설정이 올바르지 않아요.' });
     if (!TOTAL_TIME_OPTIONS.includes(totalSeconds)) return sendAck(callback, { ok: false, message: '라운드 총 시간 설정이 올바르지 않아요.' });
-    if (!ROUND_OPTIONS.includes(rounds)) return sendAck(callback, { ok: false, message: '라운드 수 설정이 올바르지 않아요.' });
+    if (!isValidRounds(rounds)) return sendAck(callback, { ok: false, message: `라운드 수는 ${MIN_ROUNDS}~${MAX_ROUNDS} 사이의 정수로 입력해 주세요.` });
     if (![2, 3, 4, 5, 6, 7, 8].includes(maxPlayers) || maxPlayers < orderedPlayers(room).length) return sendAck(callback, { ok: false, message: '최대 인원은 현재 인원보다 적을 수 없어요.' });
     const title = payload.title === undefined ? room.title : safeTitle(payload.title, room.title);
     let password = room.password;

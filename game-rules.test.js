@@ -200,3 +200,23 @@ test('validateWord: 한방 허용(기본)이면 한방 단어도 통과한다', 
 test('validateWord: 한방 금지 방에서도 일반 단어는 통과한다', () => {
   assert.equal(validateWord(normalSample, dictionary, new Set(), '', { allowOneShot: false, startIndex }).ok, true);
 });
+
+// ── 라운드 수 (1~25) · 라운드별 턴 시간 ─────────────────
+const { isValidRounds, MIN_ROUNDS, MAX_ROUNDS, turnPlanFor } = require('./game-rules');
+
+test('isValidRounds: 1~25 사이의 정수만 허용한다', () => {
+  assert.equal(MIN_ROUNDS, 1);
+  assert.equal(MAX_ROUNDS, 25);
+  for (const ok of [1, 2, 4, 10, 24, 25]) assert.equal(isValidRounds(ok), true, `${ok}`);
+  for (const bad of [0, -1, 26, 100, 2.5, NaN, Infinity, '5', null, undefined]) assert.equal(isValidRounds(bad), false, `${bad}`);
+});
+
+test('turnPlanFor: 라운드 수만큼의 턴 시간을 돌려주고 하한 아래로 내려가지 않는다', () => {
+  assert.deepEqual(turnPlanFor(15, 7), [15, 13, 11, 9, 7, 5, 5]);
+  const long = turnPlanFor(30, 25);
+  assert.equal(long.length, 25);
+  assert.equal(Math.min(...long), 11); // 기본 시간의 35%(30초 → 11초)까지만 줄어든다
+  assert.equal(Math.min(...turnPlanFor(10, 25)), 5); // 그래도 5초 아래로는 내려가지 않는다
+  for (let i = 1; i < long.length; i += 1) assert.ok(long[i] <= long[i - 1], '턴 시간은 줄기만 해야 함');
+  assert.deepEqual(turnPlanFor(10, 1), [10]);
+});
