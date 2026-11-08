@@ -39,7 +39,27 @@ function allowedFirstSyllables(syllable) {
   return result;
 }
 
-function validateWord(value, dictionary, usedWords, requiredFirst = '') {
+// ── 한방 단어 ────────────────────────────────────────────
+// 한방 단어: 사전에 이어 갈 수 있는 단어가 하나도 없는 단어. (끝 글자 + 두음법칙 변형으로 시작하는 다른 단어가 없음)
+// 첫 글자별 단어 수를 미리 세어 두면 판정이 O(1)에 가깝다.
+function buildStartIndex(dictionary) {
+  const index = new Map();
+  for (const word of dictionary) index.set(word[0], (index.get(word[0]) || 0) + 1);
+  return index;
+}
+
+function isOneShotWord(word, startIndex) {
+  const text = String(word ?? '');
+  if (!text) return false;
+  const allowed = allowedFirstSyllables(text[text.length - 1]);
+  let followers = 0;
+  for (const syllable of allowed) followers += startIndex.get(syllable) || 0;
+  if (allowed.includes(text[0])) followers -= 1; // 자기 자신은 이미 사용했으므로 제외
+  return followers <= 0;
+}
+
+// options: { allowOneShot: false 이면 한방 단어 거부, startIndex: buildStartIndex() 결과 }
+function validateWord(value, dictionary, usedWords, requiredFirst = '', options = {}) {
   const word = normalizeWord(value);
   if (!word) return { ok: false, code: 'EMPTY', message: '단어를 입력해 주세요.' };
   if (!HANGUL_WORD.test(word)) {
@@ -61,6 +81,9 @@ function validateWord(value, dictionary, usedWords, requiredFirst = '') {
         message: `${label}(으)로 시작하는 단어를 입력해 주세요.`
       };
     }
+  }
+  if (options.allowOneShot === false && options.startIndex && isOneShotWord(word, options.startIndex)) {
+    return { ok: false, code: 'ONESHOT', message: '한방 단어는 이 방에서 쓸 수 없어요.' };
   }
   return { ok: true, word };
 }
@@ -157,7 +180,7 @@ function buildRoundSummary({ players, words, winnerId = null, startedAt = null, 
 }
 
 module.exports = {
-  normalizeWord, validateWord, allowedFirstSyllables, buildRoundSummary, HANGUL_WORD, REACTION_EMOJIS,
+  normalizeWord, validateWord, allowedFirstSyllables, buildStartIndex, isOneShotWord, buildRoundSummary, HANGUL_WORD, REACTION_EMOJIS,
   TOTAL_TIME_OPTIONS, ROUND_OPTIONS, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS, MIN_TURN_SECONDS,
   turnSecondsForRound, buildMissionPool, pickMissionLetter, hasMissionLetter, countMissionLetters, calcScore
 };

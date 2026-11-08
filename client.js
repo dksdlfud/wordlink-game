@@ -549,7 +549,7 @@
         <span class="room-num"><i class="room-dot ${status}"></i>${room.number}</span>
         <span class="room-title">${escapeHtml(room.title)}</span>
         <span class="room-lock${room.locked ? ' on' : ''}" title="${room.locked ? '비밀번호가 필요한 방' : '자유롭게 입장할 수 있는 방'}">${room.locked ? '🔒' : '🔓'}</span>
-        <span class="room-rule">끝말잇기 · ${room.rounds}라운드 · ${room.totalSeconds}초 · 턴 ${room.turnSeconds}초</span>
+        <span class="room-rule">끝말잇기 · ${room.rounds}라운드 · ${room.totalSeconds}초 · 턴 ${room.turnSeconds}초${room.allowOneShot === false ? ' · 한방 금지' : ''}</span>
         <span class="room-meta"><span class="room-host">방장 ${escapeHtml(room.hostName || '-')}</span><span class="room-people">👥 ${room.players}/${room.maxPlayers}</span><span class="room-state ${status}">${label}</span></span>
       </button>`;
   }
@@ -668,6 +668,7 @@
           <div><label class="field-label" for="create-rounds">라운드 수</label><select id="create-rounds" class="select-input">${options(ROUND_OPTIONS, 3, '라운드')}</select></div>
           <div><label class="field-label" for="create-total">라운드 총 시간</label><select id="create-total" class="select-input">${options(TOTAL_TIME_OPTIONS, 60, '초')}</select></div>
           <div><label class="field-label" for="create-turn">턴 제한 시간</label><select id="create-turn" class="select-input">${options([10, 15, 20, 30], 15, '초')}</select></div>
+          <div><label class="field-label" for="create-oneshot">한방 단어 <small class="field-hint">(이어 갈 단어가 없는 단어)</small></label><select id="create-oneshot" class="select-input"><option value="true" selected>허용</option><option value="false">금지</option></select></div>
         </div>
         <div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>취소</button><button id="create-submit" type="submit" class="primary-button">방 만들기 <span aria-hidden="true">↗</span></button></div>
       </form>`);
@@ -683,7 +684,8 @@
         maxPlayers: Number($('#create-max', node).value),
         rounds: Number($('#create-rounds', node).value),
         totalSeconds: Number($('#create-total', node).value),
-        turnSeconds: Number($('#create-turn', node).value)
+        turnSeconds: Number($('#create-turn', node).value),
+        allowOneShot: $('#create-oneshot', node).value === 'true'
       });
       if (!result.ok) { showToast(result.message, 'error'); submit.disabled = false; return; }
       closeDialog();
@@ -729,6 +731,10 @@
         <select id="setting-rounds" class="select-input">${ROUND_OPTIONS.map(num => `<option value="${num}" ${room.settings.rounds === num ? 'selected' : ''}>${num}라운드</option>`).join('')}</select>
       </div>
       <div class="setting-block">
+        <label class="field-label" for="setting-oneshot">한방 단어 <small class="field-hint">(이어 갈 단어가 없는 단어)</small></label>
+        <select id="setting-oneshot" class="select-input"><option value="true" ${room.settings.allowOneShot !== false ? 'selected' : ''}>허용</option><option value="false" ${room.settings.allowOneShot === false ? 'selected' : ''}>금지</option></select>
+      </div>
+      <div class="setting-block">
         <label class="field-label" for="setting-players">최대 인원</label>
         <select id="setting-players" class="select-input">${[2,3,4,5,6,7,8].map(num => `<option value="${num}" ${room.settings.maxPlayers === num ? 'selected' : ''} ${num < room.players.length ? 'disabled' : ''}>${num}명</option>`).join('')}</select>
         <p class="setting-note">인원은 2~8명까지 설정할 수 있어요.</p>
@@ -738,6 +744,7 @@
       <div class="setting-block"><label class="field-label">턴 제한 시간</label><div class="read-only-setting">${room.settings.turnSeconds}초</div></div>
       <div class="setting-block"><label class="field-label">라운드 총 시간</label><div class="read-only-setting">${room.settings.totalSeconds}초</div></div>
       <div class="setting-block"><label class="field-label">라운드 수</label><div class="read-only-setting">${room.settings.rounds}라운드</div></div>
+      <div class="setting-block"><label class="field-label">한방 단어</label><div class="read-only-setting">${room.settings.allowOneShot === false ? '금지' : '허용'}</div></div>
       <div class="setting-block"><label class="field-label">최대 인원</label><div class="read-only-setting">${room.settings.maxPlayers}명</div></div>
       <p class="setting-note">대기실 설정은 방장만 변경할 수 있어요.</p>`;
 
@@ -779,6 +786,7 @@
       code: state.room.code, playerId: state.session.playerId,
       turnSeconds: Number($('#setting-time').value), maxPlayers: Number($('#setting-players').value),
       totalSeconds: Number($('#setting-total').value), rounds: Number($('#setting-rounds').value),
+      allowOneShot: $('#setting-oneshot').value === 'true',
       title: $('#setting-title').value, password: $('#setting-password').value, clearPassword: Boolean($('#setting-clear-pw')?.checked)
     });
     showToast(result.ok ? '게임 설정을 적용했어요.' : result.message, result.ok ? 'success' : 'error');

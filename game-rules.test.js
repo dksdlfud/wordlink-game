@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeWord, validateWord, allowedFirstSyllables } = require('./game-rules');
+const { normalizeWord, validateWord, allowedFirstSyllables, buildStartIndex, isOneShotWord } = require('./game-rules');
 
 const words = JSON.parse(fs.readFileSync(path.join(__dirname, 'words.json'), 'utf8'));
 const dictionary = new Set(words.map(normalizeWord));
@@ -161,4 +161,42 @@ test('점수 공식', () => {
   assert.ok(calcScore({ missions: 1, length: 3, chain: 4, timeRatio: .5 }) > calcScore({ missions: 0, length: 3, chain: 4, timeRatio: .5 }));
   assert.equal(countMissionLetters('가나가', '가'), 2);
   assert.equal(countMissionLetters('가나가', ''), 0);
+});
+
+// ── 한방 단어 ──
+const startIndex = buildStartIndex(dictionary);
+const oneShotSample = [...dictionary].find(word => word.length >= 3 && isOneShotWord(word, startIndex));
+const normalSample = [...dictionary].find(word => word.length >= 3 && !isOneShotWord(word, startIndex));
+
+test('isOneShotWord: 이어 갈 단어가 없는 단어만 한방 단어로 본다', () => {
+  assert.ok(oneShotSample, '사전에 한방 단어가 있어야 함');
+  assert.ok(normalSample, '사전에 일반 단어가 있어야 함');
+  assert.equal(isOneShotWord(oneShotSample, startIndex), true);
+  assert.equal(isOneShotWord(normalSample, startIndex), false);
+});
+
+test('isOneShotWord: 두음법칙으로 이어 갈 수 있으면 한방 단어가 아니다', () => {
+  const fakeIndex = new Map([['이', 3]]); // '리'로 끝나는 단어 뒤에 '이'로 시작하는 단어가 있음
+  assert.equal(isOneShotWord('가리', fakeIndex), false);
+  assert.equal(isOneShotWord('가리', new Map()), true);
+});
+
+test('isOneShotWord: 자기 자신만 이어 갈 수 있는 경우는 한방 단어다', () => {
+  assert.equal(isOneShotWord('가가', new Map([['가', 1]])), true);
+  assert.equal(isOneShotWord('가가', new Map([['가', 2]])), false);
+});
+
+test('validateWord: 한방 금지 방에서는 한방 단어를 거부한다', () => {
+  const blocked = validateWord(oneShotSample, dictionary, new Set(), '', { allowOneShot: false, startIndex });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.code, 'ONESHOT');
+});
+
+test('validateWord: 한방 허용(기본)이면 한방 단어도 통과한다', () => {
+  assert.equal(validateWord(oneShotSample, dictionary, new Set(), '').ok, true);
+  assert.equal(validateWord(oneShotSample, dictionary, new Set(), '', { allowOneShot: true, startIndex }).ok, true);
+});
+
+test('validateWord: 한방 금지 방에서도 일반 단어는 통과한다', () => {
+  assert.equal(validateWord(normalSample, dictionary, new Set(), '', { allowOneShot: false, startIndex }).ok, true);
 });

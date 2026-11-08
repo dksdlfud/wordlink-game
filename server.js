@@ -6,7 +6,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { Server } = require('socket.io');
 const {
-  validateWord, normalizeWord, allowedFirstSyllables, buildRoundSummary, REACTION_EMOJIS,
+  validateWord, normalizeWord, allowedFirstSyllables, buildStartIndex, buildRoundSummary, REACTION_EMOJIS,
   TOTAL_TIME_OPTIONS, ROUND_OPTIONS, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS,
   turnSecondsForRound, buildMissionPool, pickMissionLetter, hasMissionLetter, countMissionLetters, calcScore
 } = require('./game-rules');
@@ -22,6 +22,14 @@ const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const rawWords = JSON.parse(fs.readFileSync(path.join(ROOT, 'words.json'), 'utf8'));
 const dictionary = new Set(rawWords.map(normalizeWord));
 const missionPool = buildMissionPool(dictionary);
+const startIndex = buildStartIndex(dictionary); // 한방 단어 판정용 (첫 글자별 단어 수)
+// 방 설정의 true/false 값을 안전하게 읽는다. 값이 없으면 fallback.
+function readBool(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (value === true || value === 'true' || value === 1 || value === '1') return true;
+  if (value === false || value === 'false' || value === 0 || value === '0') return false;
+  return null; // 잘못된 값
+}
 
 const ROUND_BREAK_MS = 6000;      // 라운드 사이 쉬는 시간
 const REACTION_COOLDOWN_MS = 350; // 이모지 연타 제한
@@ -192,6 +200,7 @@ function roomListItem(room) {
     rounds: room.settings.rounds,
     totalSeconds: room.settings.totalSeconds,
     turnSeconds: room.settings.turnSeconds,
+    allowOneShot: room.settings.allowOneShot !== false,
     joinable: room.state === 'lobby' && count < room.settings.maxPlayers
   };
 }
@@ -404,7 +413,7 @@ function startMatch(room) {
 }
 function createRoomObject(code, host, options = {}) {
   const now = Date.now();
-  const settings = { turnSeconds: 15, maxPlayers: 8, totalSeconds: DEFAULT_TOTAL_SECONDS, rounds: DEFAULT_ROUNDS, ...(options.settings || {}) };
+  const settings = { turnSeconds: 15, maxPlayers: 8, totalSeconds: DEFAULT_TOTAL_SECONDS, rounds: DEFAULT_ROUNDS, allowOneShot: true, ...(options.settings || {}) };
   return {
     code,
     number: nextRoomNumber(),
@@ -557,12 +566,14 @@ io.on('connection', socket => {
         turnSeconds: pick(payload.turnSeconds, 15),
         maxPlayers: pick(payload.maxPlayers, 8),
         totalSeconds: pick(payload.totalSeconds, DEFAULT_TOTAL_SECONDS),
-        rounds: pick(payload.rounds, DEFAULT_ROUNDS)
+        rounds: pick(payload.rounds, DEFAULT_ROUNDS),
+        allowOneShot: readBool(payload.allowOneShot, true)
       };
       if (![10, 15, 20, 30].includes(settings.turnSeconds)) return sendAck(callback, { ok: false, message: '제한 시간 설정이 올바르지 않아요.' });
       if (![2, 3, 4, 5, 6, 7, 8].includes(settings.maxPlayers)) return sendAck(callback, { ok: false, message: '최대 인원 설정이 올바르지 않아요.' });
       if (!TOTAL_TIME_OPTIONS.includes(settings.totalSeconds)) return sendAck(callback, { ok: false, message: '라운드 총 시간 설정이 올바르지 않아요.' });
       if (!ROUND_OPTIONS.includes(settings.rounds)) return sendAck(callback, { ok: false, message: '라운드 수 설정이 올바르지 않아요.' });
+      if (settings.allowOneShot === null) return sendAck(callback, { ok: false, message: '한방 단어 설정이 올바르지 않아요.' });
       const password = safePassword(payload.password);
       if (password === null) return sendAck(callback, { ok: false, message: '비밀번호는 영문·숫자 1~8자로 입력해 주세요.' });
       const title = safeTitle(payload.title, `${name}님의 방`);
@@ -637,6 +648,8 @@ io.on('connection', socket => {
     const maxPlayers = Number(payload.maxPlayers);
     const totalSeconds = payload.totalSeconds === undefined ? room.settings.totalSeconds : Number(payload.totalSeconds);
     const rounds = payload.rounds === undefined ? room.settings.rounds : Number(payload.rounds);
+    const allowOneShot = readBool(payload.allowOneShot, room.settings.allowOneShot !== false);
+    if (allowOneShot === null) return sendAck(callback, { ok: false, message: '한방 단어 설정이 올바르지 않아요.' });
     if (![10, 15, 20, 30].includes(turnSeconds)) return sendAck(callback, { ok: false, message: '제한 시간 설정이 올바르지 않아요.' });
     if (!TOTAL_TIME_OPTIONS.includes(totalSeconds)) return sendAck(callback, { ok: false, message: '라운드 총 시간 설정이 올바르지 않아요.' });
     if (!ROUND_OPTIONS.includes(rounds)) return sendAck(callback, { ok: false, message: '라운드 수 설정이 올바르지 않아요.' });
@@ -649,7 +662,7 @@ io.on('connection', socket => {
       if (next === null) return sendAck(callback, { ok: false, message: '비밀번호는 영문·숫자 1~8자로 입력해 주세요.' });
       password = next;
     }
-    room.settings = { turnSeconds, maxPlayers, totalSeconds, rounds };
+    room.settings = { turnSeconds, maxPlayers, totalSeconds, rounds, allowOneShot };
     room.title = title;
     room.password = password;
     broadcast(room);
@@ -680,7 +693,7 @@ io.on('connection', socket => {
     if (room.state !== 'playing') return sendAck(callback, { ok: false, message: '현재 게임 중이 아니에요.' });
     if (room.currentPlayerId !== player.id) return sendAck(callback, { ok: false, message: '아직 내 차례가 아니에요.' });
     if (Date.now() >= room.turnEndsAt) return sendAck(callback, { ok: false, message: '입력 시간이 끝났어요.' });
-    const result = validateWord(payload.word, dictionary, room.usedWords, room.lastSyllable);
+    const result = validateWord(payload.word, dictionary, room.usedWords, room.lastSyllable, { allowOneShot: room.settings.allowOneShot !== false, startIndex });
     if (!result.ok) return sendAck(callback, { ok: false, code: result.code, message: result.message });
     const word = result.word;
     const now = Date.now();
