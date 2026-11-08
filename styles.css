@@ -1172,3 +1172,91 @@ body.dialog-open { overflow: hidden; }
   .dialog-grid { grid-template-columns: 1fr; }
   .dialog-card { padding: 18px 16px; }
 }
+
+
+/* ============================================================
+   ✍️ WORD ENTRY v3 — 단어 입력 카드 (차례 카드 바로 아래, 크고 분명하게)
+   ============================================================ */
+.entry-card {
+  position: relative; flex: none; padding: 12px 14px 10px; border-radius: 18px;
+  background: #fff; border: 3px solid #fff; box-shadow: 0 4px 0 rgba(60, 100, 30, .22);
+  transition: background-color .2s, box-shadow .2s, border-color .2s;
+}
+.entry-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; min-height: 36px; }
+.entry-title { flex: 1; min-width: 0; color: var(--text); font-family: 'Jua', sans-serif; font-size: 16px; line-height: 1.25; word-break: keep-all; }
+.entry-start { display: flex; align-items: center; gap: 6px; flex: none; }
+.entry-start:empty { display: none; }
+.entry-or { color: var(--muted-2); font-size: 11px; font-weight: 700; }
+.entry-chip {
+  display: inline-grid; place-items: center; min-width: 38px; height: 38px; padding: 0 8px; border: 0; border-radius: 11px;
+  background: #ffe27a; color: #5a3a08; font-family: 'Jua', sans-serif; font-size: 24px; line-height: 1;
+  box-shadow: 0 3px 0 rgba(90, 58, 8, .3); cursor: pointer; transition: transform .1s, box-shadow .1s;
+}
+.entry-chip:not(:disabled):hover { transform: translateY(-1px); }
+.entry-chip:not(:disabled):active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(90, 58, 8, .3); }
+.entry-chip:disabled { cursor: default; }
+.entry-chip.free { font-size: 14px; padding: 0 12px; cursor: default; }
+
+.entry-card .entry-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin: 0; }
+.entry-field { position: relative; min-width: 0; }
+.entry-card .entry-form .text-input {
+  width: 100%; height: 60px; padding: 0 64px 0 22px; border-radius: 16px; border: 3px solid #d9c9a0; background: #fffdf6;
+  font-size: 24px; font-weight: 800; letter-spacing: .02em; color: var(--text);
+  transition: border-color .15s, box-shadow .15s, background-color .15s;
+}
+.entry-card .entry-form .text-input::placeholder { color: #a99b7a; font-size: 16px; font-weight: 600; letter-spacing: 0; }
+.entry-card .entry-form .text-input:disabled { background: #efe9d8; border-color: #e3dac0; cursor: not-allowed; }
+.entry-card .entry-form .text-input:focus { outline: none; border-color: #3fae3a; box-shadow: 0 0 0 5px rgba(80, 190, 60, .25); background: #fff; }
+.entry-count { position: absolute; right: 18px; top: 50%; transform: translateY(-50%); color: #a99b7a; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; pointer-events: none; }
+.entry-card .entry-send {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 128px; height: 60px; padding: 0 22px; border-radius: 16px;
+  font-family: 'Jua', sans-serif; font-size: 20px; font-weight: 400;
+}
+.entry-send kbd { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; background: rgba(255,255,255,.28); font: 700 14px/1 'Noto Sans KR', sans-serif; }
+.entry-send:disabled { opacity: .55; filter: saturate(.5); }
+.entry-send.busy span::after { content: '…'; }
+
+.entry-hint { min-height: 22px; margin-top: 8px; padding: 0 4px; font-size: 13px; font-weight: 700; }
+.entry-hint .hint-neutral { color: var(--muted-2); }
+.entry-hint .hint-ok { color: #23812d; }
+.entry-hint .hint-warn, .entry-hint .hint-error { color: #c4480b; }
+
+/* 상태별 모양: 내 차례면 눈에 띄게, 아니면 차분하게 */
+.entry-card.is-mine { background: #f2ffe0; border-color: #8fdc4f; box-shadow: 0 4px 0 rgba(60, 140, 30, .35), 0 0 0 5px rgba(143, 220, 79, .28); animation: entry-glow 1.8s ease-in-out infinite; }
+.entry-card.is-wait, .entry-card.is-out, .entry-card.is-break, .entry-card.is-done { background: rgba(255, 255, 255, .78); }
+.entry-card.is-wait .entry-title, .entry-card.is-out .entry-title, .entry-card.is-break .entry-title, .entry-card.is-done .entry-title { color: var(--muted); font-size: 14px; }
+.entry-card.is-wait .entry-chip { background: #f0e6c4; color: #8a7a52; box-shadow: 0 3px 0 rgba(120, 100, 50, .2); }
+.entry-card.has-warn.is-mine { background: #fff4e6; border-color: #f0a44a; animation: none; box-shadow: 0 4px 0 rgba(190, 110, 20, .3); }
+.entry-card.has-warn .text-input:focus { border-color: #e8832a; box-shadow: 0 0 0 5px rgba(240, 150, 60, .25); }
+.entry-card.has-ok .text-input { border-color: #3fae3a; }
+@keyframes entry-glow { 50% { box-shadow: 0 4px 0 rgba(60, 140, 30, .35), 0 0 0 9px rgba(143, 220, 79, .12); } }
+@keyframes entry-shake { 20%, 60% { transform: translateX(-7px); } 40%, 80% { transform: translateX(7px); } }
+.entry-card .text-input.shake { animation: entry-shake .38s; }
+
+/* 이전의 구석진 입력 칸이 쓰던 스타일은 더 이상 쓰지 않는다 */
+.history-panel .chat-entry { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .entry-card.is-mine, .entry-card .text-input.shake { animation: none; }
+}
+@media (max-height: 760px) and (min-width: 851px) {
+  .entry-card { padding: 8px 12px 6px; }
+  .entry-top { margin-bottom: 6px; min-height: 32px; }
+  .entry-chip { height: 32px; min-width: 34px; font-size: 21px; }
+  .entry-card .entry-form .text-input, .entry-card .entry-send { height: 50px; min-height: 50px; font-size: 21px; }
+  .entry-hint { margin-top: 4px; min-height: 18px; font-size: 12px; }
+}
+@media (max-width: 560px) {
+  .entry-card { padding: 9px 10px 8px; border-radius: 16px; }
+  .entry-top { gap: 8px; margin-bottom: 6px; min-height: 34px; }
+  .entry-title { font-size: 14px; }
+  .entry-chip { height: 34px; min-width: 34px; font-size: 21px; }
+  .entry-card .entry-form { gap: 7px; }
+  .entry-card .entry-form .text-input { height: 52px; min-height: 52px; padding: 0 44px 0 14px; font-size: 20px; border-radius: 14px; }
+  .entry-card .entry-form .text-input::placeholder { font-size: 14px; }
+  .entry-count { right: 12px; font-size: 11px; }
+  .entry-card .entry-send { min-width: 72px; height: 52px; min-height: 52px; padding: 0 12px; font-size: 17px; border-radius: 14px; }
+  .entry-send kbd { display: none; }
+  .entry-hint { margin-top: 5px; min-height: 18px; font-size: 12px; }
+}
+.entry-card:not(.is-mine) .entry-hint { display: none; }

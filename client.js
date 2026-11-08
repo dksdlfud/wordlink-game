@@ -26,7 +26,8 @@
     lastReactionAt: 0,
     nickname: null,          // 로비에 입장한 닉네임 (없으면 홈 화면)
     hub: { rooms: [], users: [], total: 0, chat: [], onlyJoinable: false },
-    dialogClose: null
+    dialogClose: null,
+    draft: { key: '', value: '' } // 입력 중인 단어 (화면이 다시 그려져도 유지)
   };
   const CHAT_MAX_LENGTH = 120;
 
@@ -854,6 +855,33 @@
     const firstShow = showSummary && state.summaryShownGame !== room.gameId;
     if (showSummary) state.summaryShownGame = room.gameId;
     const summaryHtml = showSummary ? summaryMarkup(room, isHost, firstShow) : '';
+    const turnKey = `${room.gameId}:${room.round}:${room.currentPlayerId}:${room.turnEndsAt}`;
+    const entryMode = finished ? 'done' : onBreak ? 'break' : myTurn ? 'mine' : mine?.eliminated ? 'out' : 'wait';
+    const startChips = allowed.length
+      ? allowed.map(item => `<button type="button" class="entry-chip" data-letter="${escapeHtml(item)}" ${myTurn ? '' : 'disabled'} aria-label="${escapeHtml(item)} 입력하기">${escapeHtml(item)}</button>`).join('<span class="entry-or">또는</span>')
+      : '<span class="entry-chip free">아무 글자</span>';
+    const entryTitle = {
+      mine: allowed.length ? '이 글자로 시작하는 단어를 입력하세요' : '첫 단어를 자유롭게 입력하세요',
+      wait: `${escapeHtml(room.currentPlayerName || '다른 사람')}님이 입력하는 중이에요`,
+      out: '이번 라운드에서 탈락했어요 · 다음 라운드를 기다려 주세요',
+      break: '잠시 쉬는 시간이에요',
+      done: '게임이 끝났어요'
+    }[entryMode];
+    const entryPlaceholder = entryMode === 'mine' ? (allowed.length ? `${allowed[0]}로 시작하는 단어 (2~12글자)` : '첫 단어 (2~12글자)') : entryMode === 'wait' ? '내 차례를 기다리는 중…' : '입력할 수 없어요';
+    const entryMarkup = `<section class="entry-card is-${entryMode}" id="entry-card" aria-label="단어 입력">
+          <div class="entry-top">
+            <div class="entry-start" aria-hidden="${entryMode === 'mine' ? 'false' : 'true'}">${entryMode === 'mine' || entryMode === 'wait' ? startChips : ''}</div>
+            <div class="entry-title">${entryTitle}</div>
+          </div>
+          <form id="word-form" class="entry-form" autocomplete="off" novalidate>
+            <div class="entry-field">
+              <input id="word-input" class="text-input" type="text" inputmode="text" lang="ko" maxlength="12" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" aria-label="단어 입력" aria-describedby="entry-hint" placeholder="${escapeHtml(entryPlaceholder)}" ${myTurn ? '' : 'disabled'}>
+              <span id="entry-count" class="entry-count" aria-hidden="true">0/12</span>
+            </div>
+            <button class="primary-button entry-send" type="submit" ${myTurn ? '' : 'disabled'}><span>보내기</span><kbd aria-hidden="true">↵</kbd></button>
+          </form>
+          <div id="entry-hint" class="entry-hint" role="status" aria-live="polite">${myTurn ? `<span class="hint-neutral">${room.mission ? `🎯 미션 글자 ‘${escapeHtml(room.mission)}’가 들어가면 보너스 점수!` : '한글 2~12글자 · Enter로 보내기'}</span>` : ''}</div>
+        </section>`;
     const reactionBar = `<section class="reaction-bar" aria-label="이모지 반응"><span class="reaction-label">반응</span><div class="reaction-buttons">${REACTIONS.map(emoji => `<button type="button" class="reaction-button" data-emoji="${emoji}" aria-label="${emoji} 반응 보내기">${emoji}</button>`).join('')}</div></section>`;
     app.innerHTML = `
       <section class="fade-in game-screen">
@@ -891,6 +919,7 @@
             <div class="turn-clock"><span class="clock-icon">◷</span><span id="clock-number" class="clock-number">${isPlaying ? room.turnSeconds : '—'}</span></div>
           </div>
         </section>
+        ${entryMarkup}
         <div class="players-row">
           <section class="panel score-panel"><div class="panel-header"><span class="panel-title">플레이어 순위</span><span class="panel-caption">점수</span></div><div class="score-list">${scoreRows}</div></section>
         </div>
@@ -899,12 +928,6 @@
         <section class="panel history-panel chat-panel">
           <div class="panel-header"><span class="panel-title">단어 기록</span><span class="panel-caption">${wordCount}개</span></div>
           <div id="history-list" class="history-list">${history || '<div class="history-empty">아직 입력된 단어가 없어요.<br>첫 번째 단어의 주인공이 되어 보세요!</div>'}</div>
-          <div class="chat-entry">
-            <form id="word-form" class="entry-form">
-              <input id="word-input" class="text-input" type="text" maxlength="12" autocomplete="off" placeholder="${myTurn ? (room.lastSyllable ? `${allowedPlaceholder}…` : '첫 단어') : '기다리는 중…'}" ${myTurn ? '' : 'disabled'}>
-              <button class="primary-button" type="submit" ${myTurn ? '' : 'disabled'}>제출</button>
-            </form>
-          </div>
         </section>
         </div>
       </section>${summaryHtml}`;
@@ -922,26 +945,107 @@
       if ($('#summary-rematch')) $('#summary-rematch').addEventListener('click', rematch);
       if (firstShow) $('.summary-card')?.focus({ preventScroll: true });
     }
-    const input = $('#word-input');
-    if (myTurn && input) input.focus({ preventScroll: true });
+    setupEntry(room, { myTurn, allowed, turnKey });
     updateClock();
     const historyNode = $('#history-list');
     if (historyNode) historyNode.scrollTop = 0;
+  }
+  // ---------- 단어 입력 ----------
+  // 입력하는 동안 규칙을 바로 알려 준다. (최종 판정은 항상 서버가 한다)
+  function checkDraft(word, room) {
+    const text = word.normalize('NFC').replace(/\s+/gu, '');
+    if (!text) return { level: 'neutral', text: '' };
+    if (/[^가-힣]/u.test(text)) return { level: 'warn', text: '한글만 입력할 수 있어요 (자음·모음만 있는 글자는 안 돼요)' };
+    const allowed = (room.allowedSyllables && room.allowedSyllables.length) ? room.allowedSyllables : (room.lastSyllable ? [room.lastSyllable] : []);
+    if (allowed.length && !allowed.includes(text[0])) {
+      return { level: 'warn', text: `첫 글자는 ${allowed.map(item => `‘${item}’`).join(' 또는 ')}(이)어야 해요` };
+    }
+    if (text.length < 2) return { level: 'neutral', text: '2글자 이상 입력해 주세요' };
+    if (room.words.some(item => item.type === 'word' && item.word === text)) return { level: 'warn', text: '이미 사용한 단어예요' };
+    const hits = room.mission ? [...text].filter(ch => ch === room.mission).length : 0;
+    return { level: 'ok', text: hits ? `🎯 미션 글자 ×${hits} · 보너스 점수! Enter로 보내기` : 'Enter로 보내기' };
+  }
+  function setEntryHint(level, text) {
+    const hint = $('#entry-hint');
+    const card = $('#entry-card');
+    if (hint) hint.innerHTML = text ? `<span class="hint-${level}">${level === 'ok' ? '✓ ' : level === 'warn' || level === 'error' ? '⚠ ' : ''}${escapeHtml(text)}</span>` : '';
+    if (card) { card.classList.toggle('has-warn', level === 'warn' || level === 'error'); card.classList.toggle('has-ok', level === 'ok'); }
+  }
+  function setupEntry(room, { myTurn, allowed, turnKey }) {
+    const input = $('#word-input');
+    const form = $('#word-form');
+    if (!input || !form) return;
+    form.addEventListener('submit', submitWord);
+    const count = $('#entry-count');
+    let composing = false;
+    const refresh = () => {
+      if (count) count.textContent = `${[...input.value].length}/12`;
+      form.classList.toggle('has-text', Boolean(input.value));
+      if (!myTurn) return;
+      if (composing) { setEntryHint('neutral', ''); return; } // 글자를 조합하는 중에는 안내를 잠시 멈춘다.
+      const result = checkDraft(input.value, state.room || room);
+      if (result.text) setEntryHint(result.level, result.text);
+      else setEntryHint('neutral', '');
+      if (!result.text && !input.value) {
+        const hint = $('#entry-hint');
+        if (hint) hint.innerHTML = `<span class="hint-neutral">${room.mission ? `🎯 미션 글자 ‘${escapeHtml(room.mission)}’가 들어가면 보너스 점수!` : '한글 2~12글자 · Enter로 보내기'}</span>`;
+      }
+    };
+    input.addEventListener('compositionstart', () => { composing = true; });
+    input.addEventListener('compositionend', () => { composing = false; state.draft = { key: turnKey, value: input.value }; refresh(); });
+    input.addEventListener('input', () => {
+      state.draft = { key: turnKey, value: input.value };
+      input.classList.remove('shake');
+      refresh();
+    });
+    $('#entry-card')?.querySelectorAll('.entry-chip[data-letter]').forEach(chip => chip.addEventListener('click', () => {
+      if (!myTurn) return;
+      const letter = chip.dataset.letter;
+      // 비어 있거나 다른 글자로 시작하면 그 글자로 맞춰 주고, 이미 맞게 시작했다면 그대로 둔다.
+      if (!input.value || !allowed.includes(input.value[0])) input.value = letter + (input.value ? input.value.slice(1) : '');
+      state.draft = { key: turnKey, value: input.value };
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(input.value.length, input.value.length);
+      refresh();
+    }));
+    // 다른 사람의 반응·점수 갱신으로 화면이 다시 그려져도 쓰던 글자를 그대로 복원한다.
+    if (myTurn && state.draft.key === turnKey && state.draft.value) input.value = state.draft.value;
+    else if (state.draft.key !== turnKey) state.draft = { key: turnKey, value: '' };
+    if (myTurn) {
+      refresh();
+      const keepFocus = !state.hadFocusBeforeRender && document.activeElement && document.activeElement !== document.body && document.activeElement.closest?.('.reaction-bar');
+      if (!keepFocus) { input.focus({ preventScroll: true }); input.setSelectionRange(input.value.length, input.value.length); }
+    } else refresh();
+  }
+  function flashEntryError(message) {
+    const input = $('#word-input');
+    setEntryHint('error', message);
+    if (input) {
+      input.classList.remove('shake');
+      void input.offsetWidth; // 애니메이션을 다시 시작한다.
+      input.classList.add('shake');
+      input.focus();
+      input.select(); // 틀린 단어는 선택해 두어 바로 다시 입력할 수 있게 한다.
+    }
   }
   async function submitWord(event) {
     event.preventDefault();
     const input = $('#word-input');
     const word = input?.value.trim();
-    if (!word) return showToast('단어를 입력해 주세요.', 'error');
-    const button = $('#word-form button');
-    button.disabled = true;
+    if (!word) return flashEntryError('단어를 입력해 주세요.');
+    const local = checkDraft(word, state.room);
+    if (local.level === 'warn') { sound.play('error'); return flashEntryError(local.text); }
+    const button = $('#word-form button[type="submit"]');
+    if (button) { if (button.disabled) return; button.disabled = true; button.classList.add('busy'); }
     const result = await request('game:submit', { code: state.room.code, playerId: state.session.playerId, word });
     if (!result.ok) {
       sound.play('error');
-      showToast(result.message, 'error');
-      if (input) { input.value = ''; input.focus(); }
-      if (button) button.disabled = false;
+      flashEntryError(result.message || '단어를 보내지 못했어요.');
+      const live = $('#word-form button[type="submit"]');
+      if (live) { live.disabled = false; live.classList.remove('busy'); }
     } else {
+      state.draft = { key: '', value: '' };
+      if (input) input.value = '';
       sound.play('submit');
       if (result.missions) sound.play('bonus', 160);
       showToast(`+${result.points}점${result.chain > 1 ? ` · ${result.chain}체인` : ''}${result.newMission ? ` · 새 미션 ‘${result.newMission}’` : ''}`, 'success');
