@@ -23,8 +23,12 @@
     summaryClosedGame: null,
     summaryShownGame: null,
     lastTick: '',
-    lastReactionAt: 0
+    lastReactionAt: 0,
+    nickname: null,          // 로비에 입장한 닉네임 (없으면 홈 화면)
+    hub: { rooms: [], users: [], total: 0, chat: [], onlyJoinable: false },
+    dialogClose: null
   };
+  const CHAT_MAX_LENGTH = 120;
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -300,15 +304,19 @@
       const result = await request('room:restore', { code: saved.code, playerId: saved.playerId });
       state.restoring = false;
       if (result.ok) {
+        state.nickname = saved.name;
         state.room = result.room;
         saveSession(saved);
         render();
       } else if (readSession()) {
         clearSession();
-        render();
-        showToast('이전 게임방을 찾을 수 없어 홈으로 이동했어요.', 'error');
+        if (state.nickname) await enterLobby(state.nickname, { silent: true }); else render();
+        showToast(`이전 게임방을 찾을 수 없어 ${state.nickname ? '로비' : '홈'}로 이동했어요.`, 'error');
       }
+      return;
     }
+    // 방 안이 아니라 로비에 있었다면, 서버가 재시작됐거나 연결이 끊겼다 돌아온 것이므로 다시 입장한다.
+    if (state.nickname) await enterLobby(state.nickname, { silent: true });
   });
   socket.on('disconnect', () => setConnection(false));
   socket.on('connect_error', () => setConnection(false));
@@ -319,60 +327,109 @@
       setRoom(room);
     }
   });
+  socket.on('lobby:rooms', rooms => { state.hub.rooms = rooms; updateRooms(); updateProfile(); });
+  socket.on('lobby:users', payload => { state.hub.users = payload.list; state.hub.total = payload.total; updateUsers(); updateProfile(); });
+  socket.on('lobby:chat', message => {
+    state.hub.chat.push(message);
+    if (state.hub.chat.length > 80) state.hub.chat.shift();
+    appendChatLine(message);
+  });
   socket.on('game:reaction', showReaction);
   socket.on('notice', payload => showToast(payload.message || '알 수 없는 오류가 발생했어요.', payload.type || 'info'));
   socket.on('server:hello', payload => {
     document.documentElement.dataset.dictionarySize = String(payload.dictionarySize || 0);
   });
 
+  // ---------- 다이얼로그 ----------
+  function openDialog(html) {
+    closeDialog();
+    const node = document.createElement('div');
+    node.id = 'dialog';
+    node.className = 'dialog-backdrop';
+    node.innerHTML = `<div class="dialog-card" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`;
+    document.body.append(node);
+    document.body.classList.add('dialog-open');
+    node.addEventListener('mousedown', event => { if (event.target === node) closeDialog(); });
+    node.querySelectorAll('[data-cancel]').forEach(button => button.addEventListener('click', closeDialog));
+    return node;
+  }
+  function closeDialog() {
+    const node = $('#dialog');
+    if (node) node.remove();
+    document.body.classList.remove('dialog-open');
+    const callback = state.dialogClose;
+    state.dialogClose = null;
+    if (callback) callback();
+  }
+  // 비밀번호를 입력받는다. 취소하면 null.
+  function askPassword(note = '') {
+    return new Promise(resolve => {
+      const node = openDialog(`
+        <h2 class="dialog-title">🔒 비밀번호 입력</h2>
+        <p class="dialog-note">${escapeHtml(note || '이 방은 비밀번호가 필요해요.')}</p>
+        <form id="password-form" autocomplete="off">
+          <input id="password-input" class="text-input" type="password" maxlength="8" autocomplete="off" placeholder="비밀번호">
+          <div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>취소</button><button type="submit" class="primary-button">입장</button></div>
+        </form>`);
+      state.dialogClose = () => resolve(null);
+      const input = $('#password-input', node);
+      input.focus();
+      $('#password-form', node).addEventListener('submit', event => {
+        event.preventDefault();
+        const value = input.value.trim();
+        if (!value) return;
+        state.dialogClose = null;
+        closeDialog();
+        resolve(value);
+      });
+    });
+  }
+
+  // ---------- 홈 (닉네임 입력) ----------
   function renderHome() {
     document.body.classList.remove('modal-open');
-    const queryCode = new URLSearchParams(location.search).get('room') || '';
+    closeDialog();
+    const rawCode = new URLSearchParams(location.search).get('room') || '';
+    const inviteCode = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
     app.innerHTML = `
       <section class="home-layout fade-in">
         <div class="hero-copy">
           <span class="eyebrow">WORD GAME · REALTIME</span>
           <h1 class="hero-title">단어를 잇고,<br><span class="accent">친구와 플레이.</span></h1>
-          <p class="hero-description">마지막 글자에서 다음 단어가 시작되는 순간. 친구를 초대하고, 제한 시간 안에 가장 기발한 단어를 이어 보세요.</p>
+          <p class="hero-description">로비에서 열려 있는 방을 골라 바로 들어가거나, 직접 방을 만들어 친구를 기다려 보세요. 제한 시간 안에 가장 기발한 단어를 이어 가면 됩니다.</p>
           <div class="feature-row">
             <span class="feature-chip"><b>⚡</b> 실시간 대전</span>
-            <span class="feature-chip"><b>🔗</b> 친구 초대</span>
-            <span class="feature-chip"><b>⭐</b> 점수 경쟁</span>
+            <span class="feature-chip"><b>🚪</b> 자유 접속 방</span>
+            <span class="feature-chip"><b>💬</b> 로비 채팅</span>
           </div>
         </div>
         <section class="home-card">
           <div class="card-kicker">LET'S PLAY TOGETHER</div>
-          <h2 class="card-heading">게임 시작하기</h2>
-          <p class="card-subtitle">닉네임을 정하고 새 방을 만들거나 친구의 방에 참가하세요.</p>
+          <h2 class="card-heading">로비 입장하기</h2>
+          <p class="card-subtitle">닉네임만 정하면 가입 없이 바로 들어갈 수 있어요.</p>
           <label class="field-label" for="display-name">플레이어 닉네임</label>
           <input id="display-name" class="text-input" type="text" maxlength="12" autocomplete="nickname" placeholder="닉네임을 입력하세요" value="${escapeHtml(localStorage.getItem('wordlink.nickname') || '')}">
-          <div class="two-fields">
-            <div>
-              <label class="field-label" for="turn-seconds-home">턴 제한 시간</label>
-              <select id="turn-seconds-home" class="select-input"><option value="10">10초</option><option value="15" selected>15초</option><option value="20">20초</option><option value="30">30초</option></select>
-            </div>
-            <div>
-              <label class="field-label" for="max-players-home">최대 인원</label>
-              <select id="max-players-home" class="select-input"><option value="2">2명</option><option value="3">3명</option><option value="4">4명</option><option value="5">5명</option><option value="6">6명</option><option value="7">7명</option><option value="8" selected>8명</option></select>
-            </div>
-          </div>
-          <button id="create-room" class="primary-button button-full">새 게임방 만들기 <span aria-hidden="true">↗</span></button>
-          <div class="divider-label">또는 방 코드로 참가</div>
-          <div class="join-row">
-            <input id="join-code" class="text-input code-input" type="text" maxlength="5" placeholder="방 코드 5자리" autocomplete="off" value="${escapeHtml(queryCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5))}">
-            <button id="join-room" class="secondary-button">참가하기</button>
-          </div>
+          <button id="enter-lobby" class="primary-button button-full" style="margin-top:18px">로비 입장 <span aria-hidden="true">↗</span></button>
+          ${inviteCode ? `<div class="divider-label">초대받은 방이 있어요</div><button id="join-invite" class="secondary-button button-full">방 ${escapeHtml(inviteCode)} 으로 바로 입장</button>` : ''}
           <p class="home-footnote">계정 가입 없이 게스트로 바로 플레이할 수 있어요.</p>
         </section>
       </section>`;
-    $('#create-room').addEventListener('click', createRoom);
-    $('#join-room').addEventListener('click', joinRoom);
-    $('#display-name').addEventListener('keydown', event => { if (event.key === 'Enter') createRoom(); });
-    $('#join-code').addEventListener('input', event => { event.target.value = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5); });
-    $('#join-code').addEventListener('keydown', event => { if (event.key === 'Enter') joinRoom(); });
+    const enter = async invite => {
+      const name = readNickname();
+      if (!name) return;
+      const button = $('#enter-lobby');
+      button.disabled = true;
+      button.textContent = '입장 중…';
+      const ok = await enterLobby(name);
+      if (!ok) { renderHome(); return; }
+      if (invite) { history.replaceState({}, '', location.pathname); await joinByCode(invite); }
+    };
+    $('#enter-lobby').addEventListener('click', () => enter(''));
+    $('#display-name').addEventListener('keydown', event => { if (event.key === 'Enter') enter(''); });
+    if ($('#join-invite')) $('#join-invite').addEventListener('click', () => enter(inviteCode));
   }
 
-  function currentName() {
+  function readNickname() {
     const input = $('#display-name');
     const name = (input?.value || '').trim();
     if (!/^[\p{L}\p{N}_-]{2,12}$/u.test(name)) {
@@ -383,41 +440,255 @@
     localStorage.setItem('wordlink.nickname', name);
     return name;
   }
-  async function createRoom() {
-    const name = currentName();
-    if (!name) return;
-    const button = $('#create-room');
-    button.disabled = true;
-    button.textContent = '방을 만드는 중…';
-    const result = await request('room:create', {
-      name, playerId: playerId(),
-      turnSeconds: Number($('#turn-seconds-home').value),
-      maxPlayers: Number($('#max-players-home').value)
-    });
-    if (!result.ok) { showToast(result.message, 'error'); renderHome(); return; }
-    const session = { code: result.room.code, playerId: result.playerId, name };
-    saveSession(session);
-    state.room = result.room;
-    const settings = await request('room:settings', { code: session.code, playerId: session.playerId, turnSeconds: Number($('#turn-seconds-home')?.value || 15), maxPlayers: Number($('#max-players-home')?.value || 8) });
-    if (!settings.ok && settings.message) console.warn(settings.message);
-    render();
-    showToast('게임방을 만들었어요. 친구를 초대해 보세요!', 'success');
+  async function enterLobby(name, options = {}) {
+    const result = await request('lobby:enter', { name, playerId: playerId() });
+    if (!result.ok) {
+      if (!options.silent || result.code === 'NAME_TAKEN') showToast(result.message, 'error');
+      if (result.code !== 'IN_ROOM') state.nickname = null;
+      if (options.silent) render();
+      return false;
+    }
+    state.nickname = name;
+    state.hub.rooms = result.rooms;
+    state.hub.users = result.users.list;
+    state.hub.total = result.users.total;
+    state.hub.chat = result.chat;
+    if (!state.room) mountHub();
+    return true;
   }
-  async function joinRoom() {
-    const name = currentName();
-    if (!name) return;
-    const code = ($('#join-code')?.value || '').trim().toUpperCase();
-    if (!/^[A-Z0-9]{5}$/.test(code)) { showToast('방 코드를 영문·숫자 5자리로 입력해 주세요.', 'error'); $('#join-code')?.focus(); return; }
-    const button = $('#join-room');
-    button.disabled = true;
-    button.textContent = '접속 중…';
-    const result = await request('room:join', { code, name, playerId: playerId() });
-    if (!result.ok) { showToast(result.message, 'error'); renderHome(); return; }
-    saveSession({ code: result.room.code, playerId: result.playerId, name });
+  async function leaveLobby() {
+    await request('lobby:leave');
+    state.nickname = null;
+    state.hub.chat = [];
+    renderHome();
+  }
+
+  // ---------- 로비 화면 (접속자 · 방 목록 · 채팅) ----------
+  function nameColor(name) { return `hsl(${(hashName(name) % 24) * 15},55%,30%)`; }
+  function whereLabel(user) {
+    if (user.where === 'waiting') return `대기실 ${user.roomNumber}번`;
+    if (user.where === 'playing') return `게임중 ${user.roomNumber}번`;
+    return '로비';
+  }
+  function mountHub() {
+    document.body.classList.remove('modal-open');
+    closeDialog();
+    if (!$('#hub')) {
+      app.innerHTML = `
+        <section id="hub" class="hub fade-in">
+          <div class="hub-tabs">
+            <button id="hub-create" class="hub-tab primary" type="button">＋ 방 만들기</button>
+            <button id="hub-quick" class="hub-tab" type="button">⚡ 빠른 입장</button>
+            <button id="hub-code" class="hub-tab" type="button">🔑 코드로 입장</button>
+            <button id="hub-refresh" class="hub-tab" type="button">⟳ 새로고침</button>
+            <span class="hub-tabs-spacer"></span>
+            <span id="hub-summary" class="hub-summary"></span>
+          </div>
+          <div class="hub-grid">
+            <section class="panel hub-users">
+              <div class="panel-header"><span class="panel-title">접속자 목록</span><span id="hub-user-count" class="panel-caption"></span></div>
+              <ul id="hub-user-list" class="hub-user-list"></ul>
+            </section>
+            <section class="panel hub-rooms">
+              <div class="panel-header">
+                <span class="panel-title">방 목록 <span id="hub-room-count" class="panel-caption"></span></span>
+                <label class="hub-filter"><input id="hub-filter" type="checkbox"> 입장 가능한 방만</label>
+              </div>
+              <div id="hub-room-grid" class="hub-room-grid"></div>
+            </section>
+            <section class="panel hub-profile">
+              <div class="panel-header"><span class="panel-title">내 정보</span></div>
+              <div id="hub-profile-body" class="hub-profile-body"></div>
+            </section>
+            <section class="panel hub-chat">
+              <div class="panel-header"><span class="panel-title">로비 채팅</span><span class="panel-caption">최근 대화 60개까지 보관돼요</span></div>
+              <div id="hub-chat-log" class="hub-chat-log" role="log" aria-live="polite"></div>
+              <form id="hub-chat-form" class="hub-chat-form" autocomplete="off">
+                <input id="hub-chat-input" class="text-input" type="text" maxlength="${CHAT_MAX_LENGTH}" placeholder="메시지를 입력하고 Enter">
+                <button class="primary-button" type="submit">전송</button>
+              </form>
+            </section>
+          </div>
+        </section>`;
+      $('#hub-create').addEventListener('click', openCreateDialog);
+      $('#hub-quick').addEventListener('click', quickJoin);
+      $('#hub-code').addEventListener('click', openCodeDialog);
+      $('#hub-refresh').addEventListener('click', refreshHub);
+      $('#hub-filter').addEventListener('change', event => { state.hub.onlyJoinable = event.target.checked; updateRooms(); });
+      $('#hub-room-grid').addEventListener('click', event => {
+        const card = event.target.closest('.room-card');
+        if (!card) return;
+        if (card.dataset.status === 'playing') return showToast('이미 게임이 진행 중인 방이에요.', 'error');
+        if (card.dataset.status === 'full') return showToast('방 인원이 가득 찼어요.', 'error');
+        joinByCode(card.dataset.code);
+      });
+      $('#hub-chat-form').addEventListener('submit', sendChat);
+    }
+    $('#hub-filter').checked = state.hub.onlyJoinable;
+    updateUsers();
+    updateRooms();
+    updateProfile();
+    renderChatLog();
+  }
+  function updateUsers() {
+    const list = $('#hub-user-list');
+    if (!list) return;
+    $('#hub-user-count').textContent = `${state.hub.total}명`;
+    list.innerHTML = state.hub.users.map(user => `
+      <li class="hub-user${user.name === state.nickname ? ' me' : ''}">
+        ${avatar(user.name, true)}
+        <span class="hub-user-name">${escapeHtml(user.name)}${user.name === state.nickname ? ' <em>(나)</em>' : ''}</span>
+        <span class="hub-user-where ${user.where}">${whereLabel(user)}</span>
+      </li>`).join('') || '<li class="hub-empty">접속자가 없어요.</li>';
+  }
+  function roomCardHtml(room) {
+    const status = room.state === 'playing' ? 'playing' : room.joinable ? 'waiting' : 'full';
+    const label = { playing: '게임중', waiting: '대기중', full: '가득 참' }[status];
+    return `
+      <button type="button" class="room-card ${status}" data-code="${escapeHtml(room.code)}" data-status="${status}">
+        <span class="room-num"><i class="room-dot ${status}"></i>${room.number}</span>
+        <span class="room-title">${escapeHtml(room.title)}</span>
+        <span class="room-lock${room.locked ? ' on' : ''}" title="${room.locked ? '비밀번호가 필요한 방' : '자유롭게 입장할 수 있는 방'}">${room.locked ? '🔒' : '🔓'}</span>
+        <span class="room-rule">끝말잇기 · ${room.rounds}라운드 · ${room.totalSeconds}초 · 턴 ${room.turnSeconds}초</span>
+        <span class="room-meta"><span class="room-host">방장 ${escapeHtml(room.hostName || '-')}</span><span class="room-people">👥 ${room.players}/${room.maxPlayers}</span><span class="room-state ${status}">${label}</span></span>
+      </button>`;
+  }
+  function updateRooms() {
+    const grid = $('#hub-room-grid');
+    if (!grid) return;
+    const rooms = state.hub.onlyJoinable ? state.hub.rooms.filter(room => room.joinable) : state.hub.rooms;
+    $('#hub-room-count').textContent = `${state.hub.rooms.length}개`;
+    grid.innerHTML = rooms.length
+      ? rooms.map(roomCardHtml).join('')
+      : `<div class="hub-empty">${state.hub.rooms.length ? '입장할 수 있는 방이 없어요.' : '아직 열린 방이 없어요.<br>첫 번째 방을 만들어 보세요!'}</div>`;
+  }
+  function updateProfile() {
+    const body = $('#hub-profile-body');
+    if (!body) return;
+    const summary = $('#hub-summary');
+    if (summary) summary.textContent = `방 ${state.hub.rooms.length}개 · 접속자 ${state.hub.total}명`;
+    body.innerHTML = `
+      <div class="hub-profile-main">${avatar(state.nickname)}<div><strong>${escapeHtml(state.nickname)}</strong><small>로비에서 대기 중</small></div></div>
+      <button id="hub-rename" class="ghost-button button-full" type="button">닉네임 변경</button>`;
+    $('#hub-rename').addEventListener('click', leaveLobby);
+  }
+  function chatLineHtml(message) {
+    const time = new Date(message.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return `<div class="chat-line${message.name === state.nickname ? ' mine' : ''}"><span class="chat-name" style="color:${nameColor(message.name)}">${escapeHtml(message.name)}</span><span class="chat-text">${escapeHtml(message.text)}</span><time class="chat-time">${time}</time></div>`;
+  }
+  function renderChatLog() {
+    const log = $('#hub-chat-log');
+    if (!log) return;
+    log.innerHTML = state.hub.chat.length ? state.hub.chat.map(chatLineHtml).join('') : '<div class="chat-empty">아직 대화가 없어요. 첫 인사를 건네 보세요!</div>';
+    log.scrollTop = log.scrollHeight;
+  }
+  function appendChatLine(message) {
+    const log = $('#hub-chat-log');
+    if (!log) return;
+    const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+    $('.chat-empty', log)?.remove();
+    log.insertAdjacentHTML('beforeend', chatLineHtml(message));
+    while (log.children.length > 80) log.firstChild.remove();
+    if (nearBottom || message.name === state.nickname) log.scrollTop = log.scrollHeight;
+  }
+  async function sendChat(event) {
+    event.preventDefault();
+    const input = $('#hub-chat-input');
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    const result = await request('lobby:chat', { text });
+    if (!result.ok) {
+      input.value = text; // 너무 빨리 보냈거나 실패하면 쓰던 글을 돌려준다.
+      if (!result.throttled) showToast(result.message, 'error');
+    }
+  }
+  async function refreshHub() {
+    const result = await request('lobby:refresh');
+    if (!result.ok) return showToast(result.message, 'error');
+    state.hub.rooms = result.rooms;
+    state.hub.users = result.users.list;
+    state.hub.total = result.users.total;
+    updateRooms(); updateUsers(); updateProfile();
+  }
+
+  // ---------- 방 입장 · 만들기 ----------
+  function enterRoom(result) {
+    saveSession({ code: result.room.code, playerId: result.playerId, name: state.nickname });
     state.room = result.room;
     history.replaceState({}, '', location.pathname);
     render();
-    showToast('게임방에 참가했어요.', 'success');
+    showToast(`${result.room.number}번 방에 입장했어요.`, 'success');
+  }
+  async function joinByCode(code, password = '') {
+    const result = await request('room:join', { code, name: state.nickname, playerId: playerId(), password });
+    if (result.ok) return enterRoom(result);
+    if (result.code === 'PASSWORD_REQUIRED' || result.code === 'PASSWORD_WRONG') {
+      const typed = await askPassword(result.code === 'PASSWORD_WRONG' ? result.message : '');
+      if (typed) return joinByCode(code, typed);
+      return;
+    }
+    showToast(result.message, 'error');
+  }
+  async function quickJoin() {
+    const result = await request('room:quick', { name: state.nickname, playerId: playerId() });
+    if (result.ok) enterRoom(result); else showToast(result.message, 'error');
+  }
+  function openCodeDialog() {
+    const node = openDialog(`
+      <h2 class="dialog-title">코드로 입장</h2>
+      <p class="dialog-note">친구가 알려 준 방 코드 5자리를 입력하세요.</p>
+      <form id="code-form" autocomplete="off">
+        <input id="code-input" class="text-input code-input" type="text" maxlength="5" placeholder="방 코드 5자리">
+        <div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>취소</button><button type="submit" class="primary-button">입장</button></div>
+      </form>`);
+    const input = $('#code-input', node);
+    input.focus();
+    input.addEventListener('input', () => { input.value = input.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5); });
+    $('#code-form', node).addEventListener('submit', event => {
+      event.preventDefault();
+      if (!/^[A-Z0-9]{5}$/.test(input.value)) return showToast('방 코드를 영문·숫자 5자리로 입력해 주세요.', 'error');
+      const code = input.value;
+      closeDialog();
+      joinByCode(code);
+    });
+  }
+  function openCreateDialog() {
+    const options = (values, selected, unit) => values.map(value => `<option value="${value}" ${value === selected ? 'selected' : ''}>${value}${unit}</option>`).join('');
+    const node = openDialog(`
+      <h2 class="dialog-title">방 만들기</h2>
+      <p class="dialog-note">만든 방은 로비 목록에 바로 올라가고, 누구나 클릭해서 들어올 수 있어요.</p>
+      <form id="create-form" autocomplete="off">
+        <label class="field-label" for="create-title">방 제목</label>
+        <input id="create-title" class="text-input" type="text" maxlength="24" value="${escapeHtml(state.nickname)}님의 방">
+        <label class="field-label" for="create-password">비밀번호 <small class="field-hint">(선택 · 영문·숫자 1~8자, 비우면 자유 입장)</small></label>
+        <input id="create-password" class="text-input" type="text" maxlength="8" autocomplete="off" placeholder="비밀번호 없음">
+        <div class="dialog-grid">
+          <div><label class="field-label" for="create-max">최대 인원</label><select id="create-max" class="select-input">${options([2, 3, 4, 5, 6, 7, 8], 8, '명')}</select></div>
+          <div><label class="field-label" for="create-rounds">라운드 수</label><select id="create-rounds" class="select-input">${options(ROUND_OPTIONS, 3, '라운드')}</select></div>
+          <div><label class="field-label" for="create-total">라운드 총 시간</label><select id="create-total" class="select-input">${options(TOTAL_TIME_OPTIONS, 60, '초')}</select></div>
+          <div><label class="field-label" for="create-turn">턴 제한 시간</label><select id="create-turn" class="select-input">${options([10, 15, 20, 30], 15, '초')}</select></div>
+        </div>
+        <div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>취소</button><button id="create-submit" type="submit" class="primary-button">방 만들기 <span aria-hidden="true">↗</span></button></div>
+      </form>`);
+    $('#create-title', node).select();
+    $('#create-form', node).addEventListener('submit', async event => {
+      event.preventDefault();
+      const submit = $('#create-submit', node);
+      submit.disabled = true;
+      const result = await request('room:create', {
+        name: state.nickname, playerId: playerId(),
+        title: $('#create-title', node).value,
+        password: $('#create-password', node).value,
+        maxPlayers: Number($('#create-max', node).value),
+        rounds: Number($('#create-rounds', node).value),
+        totalSeconds: Number($('#create-total', node).value),
+        turnSeconds: Number($('#create-turn', node).value)
+      });
+      if (!result.ok) { showToast(result.message, 'error'); submit.disabled = false; return; }
+      closeDialog();
+      enterRoom(result);
+    });
   }
 
   function renderLobby(room) {
@@ -437,6 +708,15 @@
     const emptySlots = Math.max(0, Math.min(room.settings.maxPlayers - room.players.length, 3));
     const settingsContent = isHost ? `
       <div class="setting-block">
+        <label class="field-label" for="setting-title">방 제목</label>
+        <input id="setting-title" class="text-input" type="text" maxlength="24" value="${escapeHtml(room.title)}">
+      </div>
+      <div class="setting-block">
+        <label class="field-label" for="setting-password">비밀번호 <small class="field-hint">${room.locked ? '(설정됨 · 비우면 유지)' : '(선택)'}</small></label>
+        <input id="setting-password" class="text-input" type="text" maxlength="8" autocomplete="off" placeholder="${room.locked ? '새 비밀번호' : '영문·숫자 1~8자'}">
+        ${room.locked ? '<label class="check-line"><input id="setting-clear-pw" type="checkbox"> 비밀번호 해제</label>' : ''}
+      </div>
+      <div class="setting-block">
         <label class="field-label" for="setting-time">턴 제한 시간 <small class="field-hint">(라운드가 갈수록 줄어요)</small></label>
         <select id="setting-time" class="select-input"><option value="10" ${room.settings.turnSeconds === 10 ? 'selected' : ''}>10초</option><option value="15" ${room.settings.turnSeconds === 15 ? 'selected' : ''}>15초</option><option value="20" ${room.settings.turnSeconds === 20 ? 'selected' : ''}>20초</option><option value="30" ${room.settings.turnSeconds === 30 ? 'selected' : ''}>30초</option></select>
       </div>
@@ -454,6 +734,7 @@
         <p class="setting-note">인원은 2~8명까지 설정할 수 있어요.</p>
       </div>
       <button id="apply-settings" class="ghost-button button-full">설정 적용</button>` : `
+      <div class="setting-block"><label class="field-label">방 제목</label><div class="read-only-setting">${escapeHtml(room.title)}${room.locked ? ' 🔒' : ''}</div></div>
       <div class="setting-block"><label class="field-label">턴 제한 시간</label><div class="read-only-setting">${room.settings.turnSeconds}초</div></div>
       <div class="setting-block"><label class="field-label">라운드 총 시간</label><div class="read-only-setting">${room.settings.totalSeconds}초</div></div>
       <div class="setting-block"><label class="field-label">라운드 수</label><div class="read-only-setting">${room.settings.rounds}라운드</div></div>
@@ -461,9 +742,9 @@
       <p class="setting-note">대기실 설정은 방장만 변경할 수 있어요.</p>`;
 
     app.innerHTML = `
-      <section class="fade-in">
+      <section class="fade-in lobby-screen">
         <div class="page-heading-row">
-          <div><span class="eyebrow">WAITING ROOM</span><h1 class="page-title">친구들이 모이는 중</h1><p class="page-description">모든 플레이어가 준비되면 방장이 게임을 시작할 수 있어요.</p></div>
+          <div><span class="eyebrow">WAITING ROOM</span><h1 class="page-title">${escapeHtml(room.title)}</h1><p class="page-description">${room.number}번 방${room.locked ? ' · 🔒 비밀번호 방' : ''} · 모든 플레이어가 준비되면 방장이 게임을 시작할 수 있어요.</p></div>
           <div class="room-code-pill"><small>방 코드</small><strong>${escapeHtml(room.code)}</strong></div>
         </div>
         <div class="lobby-grid">
@@ -497,7 +778,8 @@
     const result = await request('room:settings', {
       code: state.room.code, playerId: state.session.playerId,
       turnSeconds: Number($('#setting-time').value), maxPlayers: Number($('#setting-players').value),
-      totalSeconds: Number($('#setting-total').value), rounds: Number($('#setting-rounds').value)
+      totalSeconds: Number($('#setting-total').value), rounds: Number($('#setting-rounds').value),
+      title: $('#setting-title').value, password: $('#setting-password').value, clearPassword: Boolean($('#setting-clear-pw')?.checked)
     });
     showToast(result.ok ? '게임 설정을 적용했어요.' : result.message, result.ok ? 'success' : 'error');
   }
@@ -520,7 +802,8 @@
     if (session) await request('room:leave', { code: session.code, playerId: session.playerId });
     clearSession();
     history.replaceState({}, '', location.pathname);
-    renderHome();
+    // 방을 나가면 로비로 돌아간다.
+    if (state.nickname) { if (!(await enterLobby(state.nickname))) renderHome(); } else renderHome();
   }
 
   function renderGame(room) {
@@ -575,6 +858,8 @@
           </div>
           <div class="game-top-info"><span class="game-round">${room.round}/${room.totalRounds} 라운드${isPlaying ? ' · <span id="round-clock">–</span>' : ''}</span><span class="game-code">방 ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존</span></div>
         </div>
+        <div class="game-body">
+        <div class="game-left">
         ${winnerContent}${breakContent}
         <section class="turn-card stage">
           <div class="stage-side stage-next">
@@ -601,6 +886,8 @@
         <div class="players-row">
           <section class="panel score-panel"><div class="panel-header"><span class="panel-title">플레이어 순위</span><span class="panel-caption">점수</span></div><div class="score-list">${scoreRows}</div></section>
         </div>
+        ${reactionBar}
+        </div>
         <section class="panel history-panel chat-panel">
           <div class="panel-header"><span class="panel-title">단어 기록</span><span class="panel-caption">${wordCount}개</span></div>
           <div id="history-list" class="history-list">${history || '<div class="history-empty">아직 입력된 단어가 없어요.<br>첫 번째 단어의 주인공이 되어 보세요!</div>'}</div>
@@ -611,7 +898,7 @@
             </form>
           </div>
         </section>
-        ${reactionBar}
+        </div>
       </section>${summaryHtml}`;
     document.body.classList.toggle('modal-open', showSummary);
     $('#word-form').addEventListener('submit', submitWord);
@@ -692,7 +979,7 @@
   }
 
   function render() {
-    if (!state.room || !state.session) { renderHome(); return; }
+    if (!state.room || !state.session) { if (state.nickname) mountHub(); else renderHome(); return; }
     if (state.room.state === 'lobby') renderLobby(state.room);
     else renderGame(state.room);
   }
@@ -701,7 +988,8 @@
   if (soundButton) soundButton.addEventListener('click', async () => { await sound.setEnabled(!sound.enabled); syncSoundButton(); });
   syncSoundButton();
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && document.body.classList.contains('modal-open')) closeSummary();
+    if (event.key === 'Escape' && document.body.classList.contains('dialog-open')) closeDialog();
+    else if (event.key === 'Escape' && document.body.classList.contains('modal-open')) closeSummary();
   });
 
   setInterval(updateClock, 180);

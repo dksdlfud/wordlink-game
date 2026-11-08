@@ -26,6 +26,18 @@ const missionPool = buildMissionPool(dictionary);
 const ROUND_BREAK_MS = 6000;      // 라운드 사이 쉬는 시간
 const REACTION_COOLDOWN_MS = 350; // 이모지 연타 제한
 
+// ---- 로비 ----
+const VERSION = '0.3.0';
+const LOBBY_CHANNEL = 'wordlink:lobby';
+const LOBBY_CHAT_LIMIT = 60;      // 서버가 기억하는 최근 채팅 수
+const CHAT_MAX_LENGTH = 120;
+const CHAT_COOLDOWN_MS = 800;
+const LOBBY_USER_LIMIT = 200;     // 접속자 목록에 보내는 최대 인원
+const LOBBY_BROADCAST_MS = 300;   // 방/접속자 목록 갱신 묶음 전송 간격
+const ROOM_IDLE_MS = 10 * 60 * 1000; // 아무도 접속해 있지 않은 방을 치우는 시간
+const PASSWORD_MAX_FAILS = 5;
+const PASSWORD_BLOCK_MS = 30 * 1000;
+
 const publicFiles = new Set(['/index.html', '/styles.css', '/client.js']);
 
 const server = http.createServer((req, res) => {
@@ -55,6 +67,10 @@ const io = new Server(server, socketOptions);
 
 const rooms = new Map();
 const timers = new Map();
+const presence = new Map(); // socket.id -> { playerId, name }  (로비·방 어디에 있든 접속 중인 사람)
+const lobbyChat = [];
+let chatSeq = 0;
+let lobbyTimer = null;
 
 function roomChannel(code) { return `wordlink:${code}`; }
 function safeName(value) {
@@ -100,6 +116,9 @@ function roomSnapshot(room) {
   const current = currentPlayer(room);
   return {
     code: room.code,
+    number: room.number,
+    title: room.title,
+    locked: Boolean(room.password),
     hostId: room.hostId,
     state: room.state,
     gameId: room.gameId,
@@ -137,9 +156,93 @@ function roomSnapshot(room) {
     winnerName: room.winnerId && getPlayer(room, room.winnerId) ? getPlayer(room, room.winnerId).name : ''
   };
 }
-function broadcast(room) { io.to(roomChannel(room.code)).emit('room:update', roomSnapshot(room)); }
+function broadcast(room) { io.to(roomChannel(room.code)).emit('room:update', roomSnapshot(room)); scheduleLobbyBroadcast(); }
 function notice(socket, message, type = 'info') { socket.emit('notice', { message, type }); }
 function livePlayers(room) { return orderedPlayers(room).filter(player => !player.left); }
+
+// ---------- 로비: 방 목록 · 접속자 · 정리 ----------
+function safeTitle(value, fallback) {
+  const title = String(value ?? '').normalize('NFC').replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 24);
+  return title || fallback;
+}
+// 비밀번호: 비어 있으면 '' (잠금 없음), 영문·숫자 1~8자면 그대로, 그 밖에는 null(잘못된 값)
+function safePassword(value) {
+  const password = String(value ?? '').trim();
+  if (password === '') return '';
+  return /^[\p{L}\p{N}]{1,8}$/u.test(password) ? password : null;
+}
+function nextRoomNumber() {
+  const used = new Set([...rooms.values()].map(room => room.number));
+  let number = 1;
+  while (used.has(number)) number += 1;
+  return number;
+}
+function roomListItem(room) {
+  const host = getPlayer(room, room.hostId);
+  const count = livePlayers(room).length;
+  return {
+    code: room.code,
+    number: room.number,
+    title: room.title,
+    locked: Boolean(room.password),
+    state: room.state === 'lobby' ? 'waiting' : 'playing',
+    players: count,
+    maxPlayers: room.settings.maxPlayers,
+    hostName: host ? host.name : '',
+    rounds: room.settings.rounds,
+    totalSeconds: room.settings.totalSeconds,
+    turnSeconds: room.settings.turnSeconds,
+    joinable: room.state === 'lobby' && count < room.settings.maxPlayers
+  };
+}
+// 종료된 방과 접속자가 아무도 없는 방은 목록에서 숨긴다.
+function roomList() {
+  return [...rooms.values()]
+    .filter(room => room.state !== 'finished' && orderedPlayers(room).some(player => player.online))
+    .sort((a, b) => a.number - b.number)
+    .map(roomListItem);
+}
+function userList() {
+  const byPlayer = new Map();
+  for (const [socketId, entry] of presence) {
+    const code = io.sockets.sockets.get(socketId)?.data.roomCode;
+    const room = code ? rooms.get(code) : null;
+    const where = room ? (room.state === 'lobby' ? 'waiting' : 'playing') : 'lobby';
+    const item = { name: entry.name, where, roomNumber: room ? room.number : null };
+    const prev = byPlayer.get(entry.playerId);
+    if (!prev || (prev.where === 'lobby' && where !== 'lobby')) byPlayer.set(entry.playerId, item);
+  }
+  const list = [...byPlayer.values()].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  return { total: list.length, list: list.slice(0, LOBBY_USER_LIMIT) };
+}
+// 방/접속자 변화는 잦으므로 짧게 모아서 한 번만 보낸다.
+function scheduleLobbyBroadcast() {
+  if (lobbyTimer) return;
+  lobbyTimer = setTimeout(() => {
+    lobbyTimer = null;
+    io.to(LOBBY_CHANNEL).emit('lobby:rooms', roomList());
+    io.to(LOBBY_CHANNEL).emit('lobby:users', userList());
+  }, LOBBY_BROADCAST_MS);
+  lobbyTimer.unref?.();
+}
+function removeRoom(room) {
+  clearTurnTimer(room);
+  clearRoundTimers(room);
+  if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
+  if (room.idleTimer) clearTimeout(room.idleTimer);
+  rooms.delete(room.code);
+  scheduleLobbyBroadcast();
+}
+// 모두 접속이 끊긴 방이 영원히 남지 않도록 일정 시간 뒤 치운다.
+function scheduleIdleCleanup(room) {
+  if (room.idleTimer) { clearTimeout(room.idleTimer); room.idleTimer = null; }
+  if (orderedPlayers(room).some(player => player.online)) return;
+  room.idleTimer = setTimeout(() => {
+    if (rooms.get(room.code) !== room || orderedPlayers(room).some(player => player.online)) return;
+    removeRoom(room);
+  }, ROOM_IDLE_MS);
+  room.idleTimer.unref?.();
+}
 
 // 한 라운드를 끝낸다. 마지막 라운드이거나 남은 사람이 부족하면 경기 전체를 끝낸다.
 function endRound(room, reason) {
@@ -212,7 +315,7 @@ function finishMatch(room) {
   broadcast(room);
   if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
   room.cleanupTimer = setTimeout(() => {
-    if (rooms.get(room.code) === room) rooms.delete(room.code);
+    if (rooms.get(room.code) === room) removeRoom(room);
   }, 30 * 60 * 1000);
   room.cleanupTimer.unref?.();
 }
@@ -299,13 +402,17 @@ function startMatch(room) {
   orderedPlayers(room).forEach(player => { player.score = 0; player.roundScore = 0; player.roundWins = 0; player.left = false; player.eliminated = false; });
   startRound(room, 0);
 }
-function createRoomObject(code, host) {
+function createRoomObject(code, host, options = {}) {
   const now = Date.now();
+  const settings = { turnSeconds: 15, maxPlayers: 8, totalSeconds: DEFAULT_TOTAL_SECONDS, rounds: DEFAULT_ROUNDS, ...(options.settings || {}) };
   return {
     code,
+    number: nextRoomNumber(),
+    title: options.title || `${host.name}님의 방`,
+    password: options.password || '',
     hostId: host.id,
     state: 'lobby',
-    settings: { turnSeconds: 15, maxPlayers: 8, totalSeconds: DEFAULT_TOTAL_SECONDS, rounds: DEFAULT_ROUNDS },
+    settings,
     players: new Map([[host.id, host]]),
     playerOrder: [host.id],
     words: [],
@@ -316,7 +423,7 @@ function createRoomObject(code, host) {
     turnEndsAt: null,
     turnCount: 0,
     turnToken: 0,
-    turnSeconds: 15,
+    turnSeconds: settings.turnSeconds,
     turnDurationMs: null,
     turnStartedAt: null,
     gameId: 0,
@@ -336,7 +443,8 @@ function createRoomObject(code, host) {
     startedAt: null,
     winnerId: null,
     createdAt: now,
-    cleanupTimer: null
+    cleanupTimer: null,
+    idleTimer: null
   };
 }
 function attachPlayer(room, player, socket) {
@@ -344,8 +452,42 @@ function attachPlayer(room, player, socket) {
   player.online = true;
   socket.data.playerId = player.id;
   socket.data.roomCode = room.code;
+  socket.leave(LOBBY_CHANNEL);
+  presence.set(socket.id, { playerId: player.id, name: player.name });
+  if (room.idleTimer) { clearTimeout(room.idleTimer); room.idleTimer = null; }
   socket.join(roomChannel(room.code));
   broadcast(room);
+}
+
+// 방 참가 공통 처리. 방 코드 입장 · 목록에서 클릭 · 빠른 입장이 모두 이 함수를 쓴다.
+function performJoin(socket, room, { name, playerId, password }) {
+  const existing = room.players.get(playerId);
+  if (existing) { // 이미 이 방의 구성원이면(재접속) 비밀번호 없이 복귀
+    if (existing.socketId && existing.socketId !== socket.id) {
+      const oldSocket = io.sockets.sockets.get(existing.socketId);
+      if (oldSocket) oldSocket.leave(roomChannel(room.code));
+    }
+    existing.name = name;
+    attachPlayer(room, existing, socket);
+    return { ok: true, room: roomSnapshot(room), playerId };
+  }
+  if (room.state !== 'lobby') return { ok: false, code: 'STARTED', message: '게임이 이미 시작된 방에는 새로 참가할 수 없어요.' };
+  if (orderedPlayers(room).length >= room.settings.maxPlayers) return { ok: false, code: 'FULL', message: '방 인원이 가득 찼어요.' };
+  if (room.password) {
+    if (Date.now() < (socket.data.pwBlockUntil || 0)) return { ok: false, code: 'PASSWORD_BLOCKED', message: '비밀번호를 여러 번 틀렸어요. 잠시 후 다시 시도해 주세요.' };
+    if (!password) return { ok: false, code: 'PASSWORD_REQUIRED', message: '비밀번호가 필요한 방이에요.' };
+    if (password !== room.password) {
+      socket.data.pwFails = (socket.data.pwFails || 0) + 1;
+      if (socket.data.pwFails >= PASSWORD_MAX_FAILS) { socket.data.pwFails = 0; socket.data.pwBlockUntil = Date.now() + PASSWORD_BLOCK_MS; }
+      return { ok: false, code: 'PASSWORD_WRONG', message: '비밀번호가 맞지 않아요.' };
+    }
+    socket.data.pwFails = 0;
+  }
+  const player = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0 };
+  room.players.set(playerId, player);
+  room.playerOrder.push(playerId);
+  attachPlayer(room, player, socket);
+  return { ok: true, room: roomSnapshot(room), playerId };
 }
 function findRoomPlayer(playerId, code) {
   const room = rooms.get(code);
@@ -355,17 +497,79 @@ function findRoomPlayer(playerId, code) {
 }
 
 io.on('connection', socket => {
-  socket.emit('server:hello', { dictionarySize: dictionary.size, version: '0.2.0' });
+  socket.emit('server:hello', { dictionarySize: dictionary.size, version: VERSION });
 
+  // ---------- 로비 ----------
+  socket.on('lobby:enter', (payload = {}, callback) => {
+    const name = safeName(payload.name);
+    if (!name) return sendAck(callback, { ok: false, message: '닉네임은 한글·영문·숫자 2~12자로 입력해 주세요.' });
+    const playerId = safePlayerId(payload.playerId);
+    const roomCode = socket.data.roomCode;
+    const inRoom = roomCode && rooms.get(roomCode)?.players.get(socket.data.playerId)?.socketId === socket.id;
+    if (inRoom) return sendAck(callback, { ok: false, code: 'IN_ROOM', message: '이미 방에 참가 중이에요.' });
+    for (const [socketId, entry] of presence) {
+      if (socketId !== socket.id && entry.name === name && entry.playerId !== playerId) {
+        return sendAck(callback, { ok: false, code: 'NAME_TAKEN', message: '지금 접속 중인 사람이 쓰는 닉네임이에요. 다른 닉네임을 사용해 주세요.' });
+      }
+    }
+    presence.set(socket.id, { playerId, name });
+    socket.join(LOBBY_CHANNEL);
+    scheduleLobbyBroadcast();
+    sendAck(callback, { ok: true, playerId, rooms: roomList(), users: userList(), chat: lobbyChat.slice(-LOBBY_CHAT_LIMIT) });
+  });
+
+  socket.on('lobby:leave', (payload = {}, callback) => {
+    socket.leave(LOBBY_CHANNEL);
+    if (!socket.data.roomCode) presence.delete(socket.id);
+    scheduleLobbyBroadcast();
+    sendAck(callback, { ok: true });
+  });
+
+  socket.on('lobby:refresh', (payload = {}, callback) => {
+    if (!presence.has(socket.id)) return sendAck(callback, { ok: false, message: '로비에 입장해 주세요.' });
+    sendAck(callback, { ok: true, rooms: roomList(), users: userList() });
+  });
+
+  socket.on('lobby:chat', (payload = {}, callback) => {
+    const entry = presence.get(socket.id);
+    if (!entry || !socket.rooms.has(LOBBY_CHANNEL)) return sendAck(callback, { ok: false, message: '로비에 입장해야 채팅할 수 있어요.' });
+    const text = String(payload.text ?? '').normalize('NFC').replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, CHAT_MAX_LENGTH);
+    if (!text) return sendAck(callback, { ok: false, throttled: true });
+    const now = Date.now();
+    if (now - (socket.data.lastChatAt || 0) < CHAT_COOLDOWN_MS) return sendAck(callback, { ok: false, throttled: true, message: '채팅을 너무 빨리 보내고 있어요.' });
+    socket.data.lastChatAt = now;
+    chatSeq += 1;
+    const message = { id: chatSeq, name: entry.name, text, at: now }; // playerId는 인증 정보라 절대 내보내지 않는다.
+    lobbyChat.push(message);
+    if (lobbyChat.length > LOBBY_CHAT_LIMIT) lobbyChat.shift();
+    io.to(LOBBY_CHANNEL).emit('lobby:chat', message);
+    sendAck(callback, { ok: true });
+  });
+
+  // ---------- 방 만들기 · 참가 ----------
   socket.on('room:create', (payload = {}, callback) => {
     try {
       if (rooms.size >= MAX_ROOMS) return sendAck(callback, { ok: false, message: '현재 방이 가득 찼어요. 잠시 후 다시 시도해 주세요.' });
       const name = safeName(payload.name);
       if (!name) return sendAck(callback, { ok: false, message: '닉네임은 한글·영문·숫자 2~12자로 입력해 주세요.' });
+      const pick = (value, fallback) => (value === undefined || value === null || value === '' ? fallback : Number(value));
+      const settings = {
+        turnSeconds: pick(payload.turnSeconds, 15),
+        maxPlayers: pick(payload.maxPlayers, 8),
+        totalSeconds: pick(payload.totalSeconds, DEFAULT_TOTAL_SECONDS),
+        rounds: pick(payload.rounds, DEFAULT_ROUNDS)
+      };
+      if (![10, 15, 20, 30].includes(settings.turnSeconds)) return sendAck(callback, { ok: false, message: '제한 시간 설정이 올바르지 않아요.' });
+      if (![2, 3, 4, 5, 6, 7, 8].includes(settings.maxPlayers)) return sendAck(callback, { ok: false, message: '최대 인원 설정이 올바르지 않아요.' });
+      if (!TOTAL_TIME_OPTIONS.includes(settings.totalSeconds)) return sendAck(callback, { ok: false, message: '라운드 총 시간 설정이 올바르지 않아요.' });
+      if (!ROUND_OPTIONS.includes(settings.rounds)) return sendAck(callback, { ok: false, message: '라운드 수 설정이 올바르지 않아요.' });
+      const password = safePassword(payload.password);
+      if (password === null) return sendAck(callback, { ok: false, message: '비밀번호는 영문·숫자 1~8자로 입력해 주세요.' });
+      const title = safeTitle(payload.title, `${name}님의 방`);
       const playerId = safePlayerId(payload.playerId);
       const code = createCode();
       const host = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0 };
-      const room = createRoomObject(code, host);
+      const room = createRoomObject(code, host, { title, password, settings });
       rooms.set(code, room);
       attachPlayer(room, host, socket);
       sendAck(callback, { ok: true, room: roomSnapshot(room), playerId });
@@ -381,25 +585,21 @@ io.on('connection', socket => {
     if (!code || code.length !== 5) return sendAck(callback, { ok: false, message: '방 코드는 영문·숫자 5자리예요.' });
     if (!name) return sendAck(callback, { ok: false, message: '닉네임은 한글·영문·숫자 2~12자로 입력해 주세요.' });
     const room = rooms.get(code);
-    if (!room) return sendAck(callback, { ok: false, message: '방을 찾을 수 없어요. 코드를 확인해 주세요.' });
-    const playerId = safePlayerId(payload.playerId);
-    const existing = room.players.get(playerId);
-    if (existing) {
-      if (existing.socketId && existing.socketId !== socket.id) {
-        const oldSocket = io.sockets.sockets.get(existing.socketId);
-        if (oldSocket) oldSocket.leave(roomChannel(code));
-      }
-      existing.name = name;
-      attachPlayer(room, existing, socket);
-      return sendAck(callback, { ok: true, room: roomSnapshot(room), playerId });
-    }
-    if (room.state !== 'lobby') return sendAck(callback, { ok: false, message: '게임이 이미 시작된 방에는 새로 참가할 수 없어요.' });
-    if (orderedPlayers(room).length >= room.settings.maxPlayers) return sendAck(callback, { ok: false, message: '방 인원이 가득 찼어요.' });
-    const player = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0 };
-    room.players.set(playerId, player);
-    room.playerOrder.push(playerId);
-    attachPlayer(room, player, socket);
-    sendAck(callback, { ok: true, room: roomSnapshot(room), playerId });
+    if (!room) return sendAck(callback, { ok: false, code: 'NOT_FOUND', message: '방을 찾을 수 없어요. 이미 사라졌거나 코드가 달라요.' });
+    const password = String(payload.password ?? '').trim().slice(0, 8);
+    sendAck(callback, performJoin(socket, room, { name, playerId: safePlayerId(payload.playerId), password }));
+  });
+
+  // 빠른 입장: 잠기지 않았고 자리가 있는 대기 중인 방 중 사람이 가장 많은 방으로 들어간다.
+  socket.on('room:quick', (payload = {}, callback) => {
+    const name = safeName(payload.name);
+    if (!name) return sendAck(callback, { ok: false, message: '닉네임은 한글·영문·숫자 2~12자로 입력해 주세요.' });
+    const candidates = [...rooms.values()]
+      .filter(room => room.state === 'lobby' && !room.password && livePlayers(room).length < room.settings.maxPlayers && orderedPlayers(room).some(player => player.online))
+      .sort((a, b) => livePlayers(b).length - livePlayers(a).length || a.number - b.number);
+    const room = candidates[0];
+    if (!room) return sendAck(callback, { ok: false, code: 'NO_ROOM', message: '지금 바로 들어갈 수 있는 방이 없어요. 새 방을 만들어 보세요!' });
+    sendAck(callback, performJoin(socket, room, { name, playerId: safePlayerId(payload.playerId), password: '' }));
   });
 
   socket.on('room:restore', (payload = {}, callback) => {
@@ -441,7 +641,17 @@ io.on('connection', socket => {
     if (!TOTAL_TIME_OPTIONS.includes(totalSeconds)) return sendAck(callback, { ok: false, message: '라운드 총 시간 설정이 올바르지 않아요.' });
     if (!ROUND_OPTIONS.includes(rounds)) return sendAck(callback, { ok: false, message: '라운드 수 설정이 올바르지 않아요.' });
     if (![2, 3, 4, 5, 6, 7, 8].includes(maxPlayers) || maxPlayers < orderedPlayers(room).length) return sendAck(callback, { ok: false, message: '최대 인원은 현재 인원보다 적을 수 없어요.' });
+    const title = payload.title === undefined ? room.title : safeTitle(payload.title, room.title);
+    let password = room.password;
+    if (payload.clearPassword) password = '';
+    else if (payload.password !== undefined && String(payload.password).trim() !== '') {
+      const next = safePassword(payload.password);
+      if (next === null) return sendAck(callback, { ok: false, message: '비밀번호는 영문·숫자 1~8자로 입력해 주세요.' });
+      password = next;
+    }
     room.settings = { turnSeconds, maxPlayers, totalSeconds, rounds };
+    room.title = title;
+    room.password = password;
     broadcast(room);
     sendAck(callback, { ok: true });
   });
@@ -535,6 +745,7 @@ io.on('connection', socket => {
     const player = room && playerForSocket(room, String(payload.playerId ?? ''), socket);
     if (!room || !player) return sendAck(callback, { ok: true });
     socket.leave(roomChannel(code));
+    socket.data.roomCode = null;
     player.online = false;
     player.socketId = null;
     if (room.state === 'lobby') {
@@ -542,7 +753,7 @@ io.on('connection', socket => {
       room.playerOrder = room.playerOrder.filter(id => id !== player.id);
       if (room.hostId === player.id) room.hostId = room.playerOrder[0] || null;
       if (room.playerOrder.length === 0) {
-        rooms.delete(code);
+        removeRoom(room);
       } else {
         broadcast(room);
       }
@@ -570,6 +781,8 @@ io.on('connection', socket => {
       if (room.hostId === player.id) room.hostId = room.playerOrder[0] || null;
       broadcast(room);
     }
+    if (rooms.get(code) === room) scheduleIdleCleanup(room);
+    scheduleLobbyBroadcast();
     sendAck(callback, { ok: true });
   });
 
@@ -589,6 +802,8 @@ io.on('connection', socket => {
   });
 
   socket.on('disconnect', () => {
+    presence.delete(socket.id);
+    scheduleLobbyBroadcast();
     const code = socket.data.roomCode;
     const playerId = socket.data.playerId;
     if (!code || !playerId) return;
@@ -598,11 +813,12 @@ io.on('connection', socket => {
     player.online = false;
     player.socketId = null;
     broadcast(room);
+    scheduleIdleCleanup(room);
   });
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`WORDLINK v0.2.0 listening on http://${HOST}:${PORT}`);
+  console.log(`WORDLINK v${VERSION} listening on http://${HOST}:${PORT}`);
   console.log(`Dictionary: ${dictionary.size.toLocaleString('en-US')} words`);
 });
 

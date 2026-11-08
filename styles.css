@@ -836,3 +836,339 @@ body {
 .turn-hint { margin-top: 4px; }
 .text-input { font-size: 18px; }
 .history-points { font-weight: 800; }
+
+/* =====================================================================
+   📐 ONE-SCREEN FIT — 스크롤 없이 한 화면에 들어가도록 (맨 아래 블록)
+   이 블록만 지우면 이전 레이아웃으로 돌아갑니다.
+   ===================================================================== */
+html, body { height: 100%; }
+body {
+  height: 100vh; height: 100dvh; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.topbar { flex: none; width: 100%; height: 52px; padding: 0 24px; }
+.brand-mark { width: 30px; height: 30px; font-size: 17px; }
+.site-footer { flex: none; width: 100%; padding: 6px 24px 8px; font-size: 11px; }
+.app-shell {
+  flex: 1 1 auto; min-height: 0; width: min(1180px, calc(100% - 32px));
+  padding: 10px 0 6px; display: flex; flex-direction: column;
+}
+.app-shell > section:not(.home-layout) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.loading-screen { min-height: 0; flex: 1; }
+
+/* ── 홈 ── */
+.home-layout { flex: 1; margin: 0 auto; width: 100%; align-items: center; gap: 24px; }
+.hero-title { font-size: clamp(34px, min(6vw, 9vh), 64px); margin: 12px 0 10px; }
+.hero-copy { padding: 0 10px 0 3px; }
+.feature-row { margin-top: 18px; }
+.home-card { padding: 22px 26px; }
+.card-heading { margin: 4px 0 4px; font-size: 22px; }
+.field-label { margin: 14px 0 6px; }
+.text-input, .select-input { height: 46px; }
+.primary-button, .secondary-button, .ghost-button { min-height: 46px; }
+.button-full { margin-top: 12px; }
+.divider-label { margin: 14px 0 10px; }
+.home-footnote { margin-top: 10px; }
+
+/* ── 대기실 ── */
+.lobby-screen .page-heading-row { flex: none; margin: 0 0 10px; align-items: center; }
+.lobby-screen .page-title { margin: 0 0 2px; font-size: 28px; }
+.lobby-screen .lobby-grid { flex: 1; min-height: 0; gap: 14px; }
+.lobby-screen .panel { min-height: 0; display: flex; flex-direction: column; }
+.lobby-screen .panel-header { flex: none; padding: 12px 18px 6px; }
+.lobby-screen .player-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 8px; scrollbar-width: thin; }
+.lobby-screen .player-row { padding: 8px; }
+.lobby-screen .avatar { width: 36px; height: 36px; font-size: 15px; }
+.lobby-screen .empty-slot { padding: 8px; }
+.lobby-screen .settings-panel { padding-bottom: 12px; overflow-y: auto; }
+.lobby-screen .settings-content { padding: 0 16px; display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
+.lobby-screen .setting-block { padding: 2px 0; }
+.lobby-screen .setting-block .field-label { margin: 4px 0 5px; }
+.lobby-screen .setting-note { margin: 4px 0 0; }
+.lobby-screen .settings-content > .button-full,
+.lobby-screen .settings-content > .setting-note { grid-column: 1 / -1; margin-top: 8px; }
+.lobby-screen .read-only-setting { min-height: 44px; }
+.lobby-screen .invite-strip { flex: none; margin-top: 10px; padding: 9px 14px; }
+.lobby-screen .lobby-actions { flex: none; margin-top: 10px; }
+
+/* ── 게임 ── */
+.game-screen .game-topline { flex: none; margin-bottom: 8px; }
+.game-screen .game-top-actions button { min-height: 36px; font-size: 13px; padding: 0 14px; }
+.game-body {
+  flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 14px; align-items: stretch;
+}
+.game-left { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.game-left > * { flex: none; margin-top: 0; }
+.game-left .players-row { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.game-body > .history-panel { margin-top: 0; min-height: 0; display: flex; flex-direction: column; }
+.history-panel .panel-header { flex: none; padding: 10px 16px 4px; }
+.history-panel .history-list { flex: 1 1 auto; min-height: 0; max-height: none; }
+.history-panel .chat-entry { flex: none; padding: 8px 12px; }
+.history-item { padding: 7px 2px; }
+.history-empty { padding: 18px 10px; }
+
+.turn-card.stage { margin-top: 12px; padding: 20px 18px 12px; gap: 10px 14px; grid-template-columns: 130px minmax(0, 1fr) 100px; }
+.stage-next { min-height: 96px; }
+.stage-next .stage-letter { font-size: clamp(36px, 5vh, 52px); }
+.stage-chain { width: 88px; height: 88px; min-height: 88px; }
+.stage-chain .stage-letter { font-size: 28px; }
+.stage-center { padding: 8px 12px 10px; }
+.turn-name { font-size: 20px; margin: 4px 0 2px; }
+.chain-current { min-height: 56px; margin-top: 4px; }
+.chain-word { font-size: clamp(28px, 4.6vh, 42px); }
+.timer-track { height: 12px; margin-top: 8px; }
+.stage-mission { padding: 5px 16px; }
+.stage-mission .stage-letter { font-size: 26px; }
+
+.score-panel .panel-header { padding: 0 4px 6px; }
+.score-panel .panel-title { font-size: 16px; }
+.players-row .score-list { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; }
+.players-row .score-row, .score-row { padding: 6px 9px; }
+.score-row .avatar { width: 30px; height: 30px; font-size: 13px; }
+.score-points { font-size: 14px; min-width: 38px; }
+
+.reaction-bar { margin-top: 0; padding: 6px 10px 6px 14px; border-width: 2px; border-radius: 14px; }
+.reaction-button { width: 42px; height: 36px; font-size: 19px; }
+.finished-banner { margin-bottom: 0; padding: 8px 14px; border-radius: 14px; }
+.finished-banner .trophy { font-size: 18px; display: inline; }
+.finished-banner h2 { display: inline; margin: 0 8px; font-size: 16px; }
+.finished-banner p { display: inline; font-size: 12px; }
+.finished-banner .break-count-line { margin-top: 0; }
+
+/* 높이가 낮은 화면 (노트북 등) */
+@media (max-height: 760px) {
+  .site-footer { display: none; }
+  .hero-description, .feature-row { display: none; }
+}
+@media (max-height: 640px) {
+  .topbar { height: 44px; }
+  .home-card { padding: 16px 22px; }
+  .field-label { margin: 8px 0 4px; }
+  .text-input, .select-input, .primary-button, .secondary-button, .ghost-button { min-height: 40px; height: 40px; }
+  .entry-form .text-input, .entry-form .primary-button { height: 44px; min-height: 44px; }
+  .home-footnote { display: none; }
+}
+
+/* 태블릿 · 모바일: 단일 열 */
+@media (max-width: 850px) {
+  .game-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); gap: 8px; }
+  .game-left { overflow: visible; }
+  .game-left .players-row { flex: none; overflow: visible; }
+  .players-row .score-list { display: flex; flex-wrap: nowrap; overflow-x: auto; padding: 0 0 4px; scrollbar-width: none; }
+  .players-row .score-row { flex: 0 0 auto; min-width: 118px; }
+  .score-panel .panel-header { display: none; }
+  .site-footer { display: none; }
+  .home-layout { grid-template-columns: 1fr; max-width: 480px; gap: 8px; }
+  .hero-copy { padding: 0 4px; text-align: center; }
+  .hero-description, .feature-row { display: none; }
+  .hero-title { margin: 0 0 6px; font-size: clamp(30px, 6vh, 46px); }
+  .lobby-screen .lobby-grid { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; gap: 8px; }
+  .lobby-screen .settings-panel { order: 2; }
+  .lobby-screen .player-list { max-height: none; }
+  .lobby-screen .page-description { display: none; }
+}
+
+@media (max-width: 560px) {
+  .topbar { height: 46px; padding: 0 12px; }
+  .app-shell { width: calc(100% - 20px); padding: 6px 0 6px; }
+  .brand-name { font-size: 16px; }
+  .game-top-actions { width: auto; flex: 1; }
+  .game-top-actions button { flex: 1; min-height: 32px; font-size: 12px; padding: 0 8px; }
+  .game-screen .game-topline { gap: 6px; }
+  .game-top-info { width: auto; margin-left: 0; gap: 8px; }
+  .game-code { display: none; }
+
+  .turn-card.stage { margin-top: 10px; padding: 16px 10px 10px; gap: 6px; grid-template-columns: 1fr 1fr 76px; grid-template-areas: 'center center center' 'next mission chain'; }
+  .stage-center { padding: 6px 8px 8px; }
+  .turn-name { font-size: 17px; margin: 2px 0; }
+  .turn-label { display: none; }
+  .turn-hint { font-size: 12px; }
+  .chain-current { min-height: 44px; }
+  .chain-word { font-size: 30px; }
+  .stage-next, .stage-side { min-height: 62px; padding: 6px; }
+  .stage-next .stage-letter { font-size: 32px; }
+  .stage-mission { flex-direction: column; gap: 2px; padding: 6px; min-height: 62px; }
+  .stage-mission::before { display: none; }
+  .stage-mission .stage-letter { font-size: 26px; }
+  .stage-side-label, .stage-mission .stage-side-label { font-size: 11px; }
+  .stage-chain { width: 70px; height: 70px; min-height: 70px; padding: 4px; }
+  .stage-chain .stage-letter { font-size: 22px; }
+  .stage-chain .stage-side-label { display: none; }
+
+  .reaction-label { display: none; }
+  .reaction-bar { padding: 4px 6px; }
+  .reaction-button { height: 32px; font-size: 17px; }
+  .history-panel .panel-header { padding: 6px 12px 2px; }
+  .history-word { font-size: 15px; }
+  .history-item { padding: 5px 2px; }
+  .entry-form { grid-template-columns: minmax(0, 1fr) 80px; }
+  .entry-form .text-input, .entry-form .primary-button { height: 42px; min-height: 42px; font-size: 16px; }
+
+  .home-card { padding: 16px; }
+  .card-subtitle { display: none; }
+  .lobby-screen .page-title { font-size: 22px; }
+  .lobby-screen .room-code-pill { align-self: center; padding: 6px 10px; }
+  .lobby-screen .room-code-pill strong { font-size: 18px; }
+  .lobby-screen .page-heading-row { flex-direction: row; }
+  .lobby-screen .settings-content { column-gap: 8px; }
+  .lobby-screen .lobby-actions { flex-direction: row; gap: 6px; }
+  .lobby-screen .lobby-actions button { padding: 0 6px; font-size: 13px; }
+  .lobby-screen .invite-strip { flex-direction: row; align-items: center; padding: 8px 10px; }
+  .lobby-screen .invite-strip p { font-size: 11px; }
+  .lobby-screen .invite-strip .secondary-button { width: auto; min-height: 34px; height: 34px; padding: 0 10px; font-size: 12px; }
+}
+
+/* 마무리 다듬기 */
+.players-row .score-list { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+@media (max-width: 560px) {
+  .game-top-actions button { white-space: nowrap; }
+  .game-round { white-space: nowrap; padding: 4px 8px; font-size: 12px; }
+  .players-row .score-row { min-width: 104px; padding: 4px 8px; }
+  .score-state { display: none; }
+  .score-row .avatar { width: 28px; height: 28px; }
+  .history-panel .panel-header { display: none; }
+  .turn-card.stage { margin-top: 8px; padding: 14px 8px 8px; }
+  .chain-current { min-height: 38px; }
+  .chain-word { font-size: 26px; }
+  .stage-next, .stage-side, .stage-mission { min-height: 54px; }
+  .stage-chain { width: 62px; height: 62px; min-height: 62px; }
+  .reaction-button { height: 30px; }
+}
+
+/* =====================================================================
+   🚪 LOBBY HUB — 접속자 목록 · 자유 접속 방 목록 · 로비 채팅 · 다이얼로그
+   이 블록만 지우면 로비 화면 스타일이 사라집니다. (맨 아래 블록)
+   ===================================================================== */
+.toast { z-index: 60; }
+body.dialog-open { overflow: hidden; }
+
+.hub { gap: 10px; }
+.hub-tabs {
+  flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border: 3px solid #fff; border-radius: 18px; background: rgba(255, 250, 240, .93);
+  box-shadow: 0 4px 0 rgba(60, 100, 30, .2);
+}
+.hub-tab {
+  min-height: 38px; padding: 0 16px; border: 0; border-radius: 12px; color: #4a3a22; background: #fff;
+  box-shadow: 0 3px 0 rgba(110, 70, 20, .22); font: 800 14px 'Noto Sans KR', sans-serif; white-space: nowrap;
+  transition: transform .12s, background .12s;
+}
+.hub-tab:hover { background: #fff7e3; transform: translateY(-1px); }
+.hub-tab:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(110, 70, 20, .22); }
+.hub-tab.primary { color: #fff; background: linear-gradient(180deg, #ffa83a, #ef7a1a); box-shadow: 0 3px 0 #b85a0c; text-shadow: 0 1px 0 rgba(120, 50, 0, .4); }
+.hub-tab.primary:hover { background: linear-gradient(180deg, #ffb455, #f58a30); }
+.hub-tabs-spacer { flex: 1; }
+.hub-summary { padding-right: 6px; color: var(--green-ink); font-size: 13px; font-weight: 700; white-space: nowrap; }
+
+.hub-grid {
+  flex: 1 1 auto; min-height: 0; display: grid; gap: 10px;
+  grid-template-columns: 250px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 190px;
+  grid-template-areas: "users rooms" "profile chat";
+}
+.hub-grid > .panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.hub-grid .panel-header { flex: none; padding: 10px 16px 6px; }
+.hub-users { grid-area: users; }
+.hub-rooms { grid-area: rooms; }
+.hub-profile { grid-area: profile; }
+.hub-chat { grid-area: chat; }
+
+/* 접속자 */
+.hub-user-list { flex: 1; min-height: 0; margin: 0; padding: 0 8px 8px; list-style: none; overflow-y: auto; scrollbar-width: thin; }
+.hub-user { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 10px; font-size: 14px; }
+.hub-user:hover { background: #fff3d6; }
+.hub-user.me { background: #eaf7dc; }
+.hub-user .avatar { width: 26px; height: 26px; font-size: 12px; border-radius: 9px; }
+.hub-user-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.hub-user-name em { color: var(--muted); font-style: normal; font-weight: 500; font-size: 12px; }
+.hub-user-where { flex: none; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 800; color: #2a6b2a; background: #e3f4d3; white-space: nowrap; }
+.hub-user-where.waiting { color: #8a5a00; background: #ffefc2; }
+.hub-user-where.playing { color: #a33; background: #ffe0e0; }
+
+/* 방 목록 */
+.hub-rooms .panel-header { gap: 10px; }
+.hub-rooms .panel-title .panel-caption { margin-left: 6px; font-family: 'Noto Sans KR', sans-serif; }
+.hub-filter { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.hub-filter input { width: 16px; height: 16px; accent-color: #2f8f3a; }
+.hub-room-grid {
+  flex: 1; min-height: 0; padding: 4px 14px 14px; overflow-y: auto; scrollbar-width: thin;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 10px; align-content: start;
+}
+.room-card {
+  display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; grid-template-areas: "num title lock" "num rule rule" "num meta meta";
+  column-gap: 10px; row-gap: 1px; padding: 9px 12px; border: 2px solid #ead9b3; border-radius: 14px; color: var(--text); background: #fff;
+  font: inherit; text-align: left; box-shadow: 0 3px 0 rgba(110, 70, 20, .18); transition: transform .12s, box-shadow .12s, border-color .12s;
+}
+.room-card:hover { transform: translateY(-2px); border-color: #f0a030; box-shadow: 0 5px 0 rgba(110, 70, 20, .22); }
+.room-card.playing, .room-card.full { background: #f4efe3; }
+.room-card.playing .room-title, .room-card.full .room-title { color: var(--muted); }
+.room-num {
+  grid-area: num; position: relative; align-self: center; width: 46px; height: 46px; display: grid; place-items: center;
+  border-radius: 12px; background: #f6ecd0; font-family: 'Jua', sans-serif; font-size: 20px; color: #6a4a1a;
+}
+.room-dot { position: absolute; top: 5px; left: 5px; width: 9px; height: 9px; border-radius: 50%; background: #2fb344; box-shadow: 0 0 0 2px #fff; }
+.room-dot.playing { background: #e05555; }
+.room-dot.full { background: #f0a030; }
+.room-title { grid-area: title; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; font-size: 15px; }
+.room-lock { grid-area: lock; font-size: 14px; opacity: .45; }
+.room-lock.on { opacity: 1; }
+.room-rule { grid-area: rule; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.room-meta { grid-area: meta; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.room-host { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-people { margin-left: auto; font-weight: 800; color: var(--text); white-space: nowrap; }
+.room-state { padding: 1px 8px; border-radius: 99px; font-weight: 800; color: #2a6b2a; background: #e3f4d3; white-space: nowrap; }
+.room-state.playing { color: #a33; background: #ffe0e0; }
+.room-state.full { color: #8a5a00; background: #ffefc2; }
+.hub-empty, .chat-empty { grid-column: 1 / -1; padding: 28px 12px; color: var(--muted); font-size: 14px; text-align: center; line-height: 1.7; }
+
+/* 내 정보 */
+.hub-profile-body { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; padding: 0 16px 12px; }
+.hub-profile-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.hub-profile-main .avatar { width: 46px; height: 46px; font-size: 20px; }
+.hub-profile-main div { min-width: 0; display: flex; flex-direction: column; }
+.hub-profile-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; }
+.hub-profile-main small { color: var(--muted); font-size: 12px; }
+.hub-profile-body .button-full { margin-top: 0; min-height: 38px; font-size: 13px; }
+
+/* 채팅 */
+.hub-chat-log { flex: 1; min-height: 0; padding: 0 16px; overflow-y: auto; scrollbar-width: thin; }
+.chat-line { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; font-size: 14px; line-height: 1.5; }
+.chat-name { flex: none; font-weight: 800; }
+.chat-name::after { content: ':'; }
+.chat-text { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.chat-line.mine .chat-text { color: #1f6d29; }
+.chat-time { flex: none; color: var(--muted-2); font-size: 11px; }
+.hub-chat-form { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) 84px; gap: 8px; padding: 8px 12px 12px; }
+.hub-chat-form .text-input, .hub-chat-form .primary-button { height: 40px; min-height: 40px; font-size: 15px; }
+
+/* 다이얼로그 */
+.dialog-backdrop { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; overflow-y: auto; background: rgba(22, 63, 26, .55); backdrop-filter: blur(4px); }
+.dialog-card { width: min(470px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; padding: 22px 24px 20px; border: 3px solid #fff; border-radius: 22px; background: var(--panel); box-shadow: var(--shadow); outline: none; animation: rise .25s ease both; }
+.dialog-title { margin: 0 0 4px; font-family: 'Jua', sans-serif; font-size: 24px; font-weight: 400; color: var(--text); }
+.dialog-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.dialog-card .field-label { margin: 12px 0 5px; }
+.dialog-card .text-input, .dialog-card .select-input { height: 44px; font-size: 16px; }
+.dialog-card #password-input, .dialog-card #code-input { margin-top: 14px; }
+.dialog-card .code-input { letter-spacing: .3em; text-align: center; text-transform: uppercase; }
+.dialog-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.dialog-actions button { min-height: 44px; padding: 0 20px; }
+.check-line { display: flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--muted); font-size: 12px; font-weight: 700; cursor: pointer; }
+.check-line input { accent-color: #2f8f3a; }
+
+/* 좁은 화면: 한 화면에 들어가도록 접속자·내 정보는 숨기고 방 목록 + 채팅만 보여 준다 */
+@media (max-width: 820px) {
+  .hub-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 190px; grid-template-areas: "rooms" "chat"; }
+  .hub-grid > .hub-users, .hub-grid > .hub-profile { display: none; }
+  .hub-tabs { flex-wrap: wrap; gap: 6px; padding: 5px 6px; }
+  .hub-tab { min-height: 34px; padding: 0 10px; font-size: 13px; }
+  .hub-tabs-spacer, .hub-summary { display: none; }
+  .hub-room-grid { grid-template-columns: 1fr; padding: 2px 10px 10px; }
+  .hub-filter { font-size: 12px; }
+}
+@media (max-width: 560px) {
+  .hub-grid { grid-template-rows: minmax(0, 1fr) 150px; }
+  .hub-chat .panel-caption { display: none; }
+  .dialog-grid { grid-template-columns: 1fr; }
+  .dialog-card { padding: 18px 16px; }
+}
