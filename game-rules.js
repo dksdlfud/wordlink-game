@@ -9,6 +9,36 @@ function normalizeWord(value) {
     .trim();
 }
 
+// ── 두음법칙 ──────────────────────────────────────────────
+// 한글 음절을 초성/중성/종성으로 나누어 처리한다.
+const HANGUL_BASE = 0xac00;
+const HANGUL_LAST = 0xd7a3;
+const CHO_N = 2;   // ㄴ
+const CHO_R = 5;   // ㄹ
+const CHO_IEUNG = 11; // ㅇ
+// 중성 인덱스: ㅏ0 ㅐ1 ㅑ2 ㅒ3 ㅓ4 ㅔ5 ㅕ6 ㅖ7 ㅗ8 ㅘ9 ㅙ10 ㅚ11 ㅛ12 ㅜ13 ㅝ14 ㅞ15 ㅟ16 ㅠ17 ㅡ18 ㅢ19 ㅣ20
+const JUNG_TO_IEUNG = new Set([2, 3, 6, 7, 12, 17, 20]); // ㅑ ㅒ ㅕ ㅖ ㅛ ㅠ ㅣ
+const JUNG_R_TO_N = new Set([0, 1, 8, 11, 13, 18]);       // ㅏ ㅐ ㅗ ㅚ ㅜ ㅡ
+
+// 끝 글자에 두음법칙을 적용했을 때 다음 단어의 첫 글자로 허용되는 글자 목록.
+// 항상 원래 글자를 첫 번째로 포함한다. (예: '리' → ['리', '이'], '라' → ['라', '나'])
+function allowedFirstSyllables(syllable) {
+  const ch = String(syllable ?? '').normalize('NFC');
+  if (!ch) return [];
+  const code = ch.codePointAt(0);
+  if (ch.length !== 1 || code < HANGUL_BASE || code > HANGUL_LAST) return [ch];
+  const offset = code - HANGUL_BASE;
+  const cho = Math.floor(offset / 588);
+  const jung = Math.floor((offset % 588) / 28);
+  const jong = offset % 28;
+  const compose = newCho => String.fromCharCode(HANGUL_BASE + (newCho * 21 + jung) * 28 + jong);
+  const result = [ch];
+  if (cho === CHO_N && JUNG_TO_IEUNG.has(jung)) result.push(compose(CHO_IEUNG)); // 녀→여, 뇨→요, 뉴→유, 니→이
+  else if (cho === CHO_R && JUNG_TO_IEUNG.has(jung)) result.push(compose(CHO_IEUNG)); // 랴→야, 려→여, 례→예, 료→요, 류→유, 리→이
+  else if (cho === CHO_R && JUNG_R_TO_N.has(jung)) result.push(compose(CHO_N)); // 라→나, 래→내, 로→노, 뢰→뇌, 루→누, 르→느
+  return result;
+}
+
 function validateWord(value, dictionary, usedWords, requiredFirst = '') {
   const word = normalizeWord(value);
   if (!word) return { ok: false, code: 'EMPTY', message: '단어를 입력해 주세요.' };
@@ -21,12 +51,16 @@ function validateWord(value, dictionary, usedWords, requiredFirst = '') {
   if (usedWords.has(word)) {
     return { ok: false, code: 'DUPLICATE', message: '이미 사용한 단어예요.' };
   }
-  if (requiredFirst && word[0] !== requiredFirst) {
-    return {
-      ok: false,
-      code: 'CHAIN',
-      message: `‘${requiredFirst}’(으)로 시작하는 단어를 입력해 주세요.`
-    };
+  if (requiredFirst) {
+    const allowed = allowedFirstSyllables(requiredFirst);
+    if (!allowed.includes(word[0])) {
+      const label = allowed.map(item => `‘${item}’`).join(' 또는 ');
+      return {
+        ok: false,
+        code: 'CHAIN',
+        message: `${label}(으)로 시작하는 단어를 입력해 주세요.`
+      };
+    }
   }
   return { ok: true, word };
 }
@@ -71,4 +105,4 @@ function buildRoundSummary({ players, words, winnerId = null, startedAt = null, 
   };
 }
 
-module.exports = { normalizeWord, validateWord, buildRoundSummary, HANGUL_WORD, REACTION_EMOJIS };
+module.exports = { normalizeWord, validateWord, allowedFirstSyllables, buildRoundSummary, HANGUL_WORD, REACTION_EMOJIS };

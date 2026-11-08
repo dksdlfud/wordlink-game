@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { Server } = require('socket.io');
-const { validateWord, normalizeWord } = require('./game-rules');
+const { validateWord, normalizeWord, allowedFirstSyllables } = require('./game-rules');
 
 // The GitHub upload currently has a flattened layout: all app files live at the repository root.
 const ROOT = __dirname;
@@ -102,6 +102,7 @@ function roomSnapshot(room) {
     turnEndsAt: room.turnEndsAt,
     turnCount: room.turnCount,
     lastSyllable: room.lastSyllable,
+    allowedSyllables: allowedFirstSyllables(room.lastSyllable),
     words: room.words.slice(-80),
     winnerId: room.winnerId,
     winnerName: room.winnerId && getPlayer(room, room.winnerId) ? getPlayer(room, room.winnerId).name : ''

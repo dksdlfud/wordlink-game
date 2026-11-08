@@ -521,7 +521,11 @@
     const finished = room.state === 'finished';
     const winnerContent = finished ? `<div class="finished-banner"><div class="trophy">🏆</div><h2>${room.winnerName ? `${escapeHtml(room.winnerName)} 승리!` : '게임 종료'}</h2><p>${room.winnerName ? '마지막까지 살아남았어요.' : '결과를 확인해 주세요.'}</p></div>` : '';
     const turnName = isPlaying ? (myTurn ? '내 차례예요!' : `${escapeHtml(room.currentPlayerName)}님의 차례`) : '게임이 종료되었어요';
-    const turnHint = myTurn ? (room.lastSyllable ? `‘${escapeHtml(room.lastSyllable)}’(으)로 시작하는 단어를 입력하세요.` : '첫 단어를 자유롭게 입력해 보세요.') : '차례가 돌아올 때까지 친구들의 단어를 확인해 보세요.';
+    const allowed = (room.allowedSyllables && room.allowedSyllables.length) ? room.allowedSyllables : (room.lastSyllable ? [room.lastSyllable] : []);
+    const allowedLabel = allowed.map(item => `‘${escapeHtml(item)}’`).join(' 또는 ');
+    const allowedChip = allowed.map(item => escapeHtml(item)).join(' / ');
+    const allowedPlaceholder = allowed.join(' · ');
+    const turnHint = myTurn ? (room.lastSyllable ? `${allowedLabel}(으)로 시작하는 단어를 입력하세요.` : '첫 단어를 자유롭게 입력해 보세요.') : '차례가 돌아올 때까지 친구들의 단어를 확인해 보세요.';
     const chain = room.words.filter(item => item.type === 'word').slice(-1)[0];
     const showSummary = finished && Boolean(room.summary) && state.summaryClosedGame !== room.gameId;
     const firstShow = showSummary && state.summaryShownGame !== room.gameId;
@@ -543,9 +547,9 @@
             </section>
             <section class="chain-card">
               <div class="chain-top"><span>WORD CHAIN</span><span>${wordCount === 0 ? 'START' : `WORD ${String(wordCount).padStart(2, '0')}`}</span></div>
-              <div class="chain-current">${chain ? `<span class="chain-word">${escapeHtml(chain.word)}</span><span class="chain-arrow">→</span><span class="required-chip">NEXT <strong>${escapeHtml(room.lastSyllable || '')}</strong></span>` : '<span class="chain-word empty">첫 단어를 기다리고 있어요</span>'}</div>
+              <div class="chain-current">${chain ? `<span class="chain-word">${escapeHtml(chain.word)}</span><span class="chain-arrow">→</span><span class="required-chip">NEXT <strong>${allowedChip}</strong></span>` : '<span class="chain-word empty">첫 단어를 기다리고 있어요</span>'}</div>
               <form id="word-form" class="entry-form">
-                <input id="word-input" class="text-input" type="text" maxlength="12" autocomplete="off" placeholder="${myTurn ? (room.lastSyllable ? `${room.lastSyllable}으로 시작하는 단어` : '첫 단어를 입력하세요') : '내 차례를 기다려 주세요'}" ${myTurn ? '' : 'disabled'}>
+                <input id="word-input" class="text-input" type="text" maxlength="12" autocomplete="off" placeholder="${myTurn ? (room.lastSyllable ? `${allowedPlaceholder}(으)로 시작하는 단어` : '첫 단어를 입력하세요') : '내 차례를 기다려 주세요'}" ${myTurn ? '' : 'disabled'}>
                 <button class="primary-button" type="submit" ${myTurn ? '' : 'disabled'}>단어 제출</button>
               </form>
               <div class="entry-help"><span>${myTurn ? '<strong>ENTER</strong> 키로 빠르게 제출할 수 있어요.' : '순서가 되면 입력창이 활성화돼요.'}</span><span>중복 단어 사용 불가</span></div>

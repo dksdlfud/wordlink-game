@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeWord, validateWord } = require('./game-rules');
+const { normalizeWord, validateWord, allowedFirstSyllables } = require('./game-rules');
 
 const words = JSON.parse(fs.readFileSync(path.join(__dirname, 'words.json'), 'utf8'));
 const dictionary = new Set(words.map(normalizeWord));
@@ -52,4 +52,53 @@ test('starter dictionary has no duplicate entries', () => {
 
 test('every starter dictionary entry is a supported Hangul word', () => {
   assert.ok(words.every(word => /^[가-힣]{2,12}$/u.test(word)));
+});
+
+test('두음법칙: ㄹ+ㅣ/ㅕ/ㅛ/ㅠ/ㅑ/ㅖ → ㅇ', () => {
+  assert.deepEqual(allowedFirstSyllables('리'), ['리', '이']);
+  assert.deepEqual(allowedFirstSyllables('려'), ['려', '여']);
+  assert.deepEqual(allowedFirstSyllables('료'), ['료', '요']);
+  assert.deepEqual(allowedFirstSyllables('류'), ['류', '유']);
+  assert.deepEqual(allowedFirstSyllables('량'), ['량', '양']);
+  assert.deepEqual(allowedFirstSyllables('례'), ['례', '예']);
+});
+
+test('두음법칙: ㄹ+ㅏ/ㅐ/ㅗ/ㅚ/ㅜ/ㅡ → ㄴ', () => {
+  assert.deepEqual(allowedFirstSyllables('라'), ['라', '나']);
+  assert.deepEqual(allowedFirstSyllables('래'), ['래', '내']);
+  assert.deepEqual(allowedFirstSyllables('로'), ['로', '노']);
+  assert.deepEqual(allowedFirstSyllables('뢰'), ['뢰', '뇌']);
+  assert.deepEqual(allowedFirstSyllables('루'), ['루', '누']);
+  assert.deepEqual(allowedFirstSyllables('릉'), ['릉', '능']);
+});
+
+test('두음법칙: ㄴ+ㅣ/ㅕ/ㅛ/ㅠ → ㅇ', () => {
+  assert.deepEqual(allowedFirstSyllables('녀'), ['녀', '여']);
+  assert.deepEqual(allowedFirstSyllables('뇨'), ['뇨', '요']);
+  assert.deepEqual(allowedFirstSyllables('뉴'), ['뉴', '유']);
+  assert.deepEqual(allowedFirstSyllables('님'), ['님', '임']);
+});
+
+test('두음법칙이 적용되지 않는 글자는 그대로', () => {
+  assert.deepEqual(allowedFirstSyllables('과'), ['과']);
+  assert.deepEqual(allowedFirstSyllables('나'), ['나']);
+  assert.deepEqual(allowedFirstSyllables('이'), ['이']);
+  assert.deepEqual(allowedFirstSyllables(''), []);
+});
+
+test('두음법칙 적용 연결: 원래 글자와 변환 글자 모두 허용', () => {
+  // 필요한 단어가 사전에 있는지 확인
+  const toIeung = [...dictionary].find(w => w[0] === '이');
+  const toNa = [...dictionary].find(w => w[0] === '나');
+  const toRa = [...dictionary].find(w => w[0] === '라');
+  assert.ok(toIeung && toNa);
+  assert.equal(validateWord(toIeung, dictionary, new Set(), '리').ok, true);
+  assert.equal(validateWord(toNa, dictionary, new Set(), '라').ok, true);
+  if (toRa) assert.equal(validateWord(toRa, dictionary, new Set(), '라').ok, true);
+});
+
+test('두음법칙 안내 메시지에 두 글자 모두 표시', () => {
+  const result = validateWord('사과', dictionary, new Set(), '리');
+  assert.equal(result.code, 'CHAIN');
+  assert.ok(result.message.includes('‘리’') && result.message.includes('‘이’'));
 });
