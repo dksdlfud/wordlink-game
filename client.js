@@ -178,6 +178,16 @@
     if (label) label.textContent = sound.enabled ? 'ON' : 'OFF';
   }
 
+  // 미션 글자가 사용돼 새 미션이 제시되면 모두에게 알려 준다.
+  function announceMissionChange(prev, next) {
+    const change = next && next.missionChange;
+    if (!change || !next.code) return;
+    if (prev && prev.code === next.code && prev.gameId === next.gameId && prev.missionChange && prev.missionChange.seq === change.seq) return;
+    if (!prev || prev.code !== next.code) { state.missionFlashSeq = change.seq; return; } // 재접속 시에는 알림 생략
+    state.missionFlashSeq = change.seq;
+    showToast(`🎯 ${change.playerName}님이 미션 ‘${change.from}’ 성공! 새 미션은 ‘${change.to}’`, 'success');
+  }
+
   // 방 상태가 바뀔 때 이전/다음 스냅샷을 비교해 알맞은 효과음을 낸다.
   function playRoomSounds(prev, next) {
     if (!prev || !state.session || prev.code !== next.code) return;
@@ -304,6 +314,7 @@
   socket.on('connect_error', () => setConnection(false));
   socket.on('room:update', room => {
     if (state.session && room.code === state.session.code) {
+      announceMissionChange(state.room, room);
       playRoomSounds(state.room, room);
       setRoom(room);
     }
@@ -532,7 +543,7 @@
     }).join('');
     const history = room.words.slice().reverse().map((item, reverseIndex) => {
       if (item.type === 'system') return `<div class="history-system">${escapeHtml(item.text)}</div>`;
-      return `<div class="history-item"><span class="history-index">${String(room.words.filter(entry => entry.type === 'word').indexOf(item) + 1).padStart(2, '0')}</span>${avatar(item.playerName, true)}<span class="history-word">${escapeHtml(item.word)}</span><span class="history-player">${escapeHtml(item.playerName)}</span><span class="history-points">${item.bonus ? `<em class="history-bonus">★ 미션 +${item.bonus}</em> ` : ''}+${item.points}</span></div>`;
+      return `<div class="history-item"><span class="history-index">${String(room.words.filter(entry => entry.type === 'word').indexOf(item) + 1).padStart(2, '0')}</span>${avatar(item.playerName, true)}<span class="history-word">${escapeHtml(item.word)}</span><span class="history-player">${escapeHtml(item.playerName)}</span><span class="history-points">${item.bonus ? `<em class="history-bonus">★ 미션${item.missionFrom ? ` ‘${escapeHtml(item.missionFrom)}’` : ''} +${item.bonus}</em> ` : ''}+${item.points}</span></div>`;
     }).join('');
     const finished = room.state === 'finished';
     const winnerContent = finished ? `<div class="finished-banner"><div class="trophy">🏆</div><h2>${room.winnerName ? `${escapeHtml(room.winnerName)} 승리!` : '게임 종료'}</h2><p>${room.winnerName ? '마지막까지 살아남았어요.' : '결과를 확인해 주세요.'}</p></div>` : '';
@@ -570,7 +581,7 @@
             <span class="stage-side-label">NEXT</span>
             <strong class="stage-letter">${allowedChip || '?'}</strong>
           </div>
-          <div class="stage-side stage-mission" title="미션 글자가 들어간 단어를 내면 +${room.missionBonus}점 보너스!">
+          <div class="stage-side stage-mission${state.missionFlashSeq && room.missionChange && room.missionChange.seq === state.missionFlashSeq ? ' mission-new' : ''}" title="미션 글자가 들어간 단어를 내면 +${room.missionBonus}점 보너스!">
             <span class="stage-side-label">MISSION</span>
             <strong class="stage-letter">${room.mission ? escapeHtml(room.mission) : '?'}</strong>
             <span class="stage-side-note">포함 시 +${room.missionBonus}</span>
@@ -641,7 +652,7 @@
     } else {
       sound.play('submit');
       if (result.bonus) sound.play('bonus', 160);
-      showToast(`‘${result.word}’ 제출 완료 · +${result.points}점${result.bonus ? ` (미션 보너스 +${result.bonus}!)` : ''}`, 'success');
+      showToast(`‘${result.word}’ 제출 완료 · +${result.points}점${result.bonus ? ` (미션 보너스 +${result.bonus}!)` : ''}${result.newMission ? ` · 새 미션 ‘${result.newMission}’` : ''}`, 'success');
     }
   }
   async function rematch() {

@@ -107,6 +107,7 @@ function roomSnapshot(room) {
     round: room.round + 1,
     totalRounds: room.settings.rounds,
     mission: room.mission,
+    missionChange: room.missionChange,
     missionBonus: MISSION_BONUS,
     roundEndsAt: room.roundEndsAt,
     nextRoundAt: room.nextRoundAt,
@@ -272,6 +273,7 @@ function startRound(room, roundIndex) {
   room.roundResult = null;
   room.nextRoundAt = null;
   room.mission = pickMissionLetter(missionPool, room.mission);
+  room.missionChange = null;
   room.turnSeconds = turnSecondsForRound(room.settings.turnSeconds, roundIndex);
   orderedPlayers(room).forEach(player => { player.roundScore = 0; player.eliminated = Boolean(player.left); });
   room.roundEndsAt = Date.now() + room.settings.totalSeconds * 1000;
@@ -327,6 +329,8 @@ function createRoomObject(code, host) {
     nextRoundAt: null,
     roundResult: null,
     mission: '',
+    missionSeq: 0,
+    missionChange: null,
     matchWords: [],
     matchWordCount: 0,
     summary: null,
@@ -471,13 +475,22 @@ io.on('connection', socket => {
     if (!result.ok) return sendAck(callback, { ok: false, code: result.code, message: result.message });
     const word = result.word;
     const now = Date.now();
-    const bonus = hasMissionLetter(word, room.mission) ? MISSION_BONUS : 0;
+    const usedMission = hasMissionLetter(word, room.mission) ? room.mission : '';
+    const bonus = usedMission ? MISSION_BONUS : 0;
     const points = word.length * 10 + bonus;
     room.usedWords.add(word);
     room.lastSyllable = word[word.length - 1];
     player.score += points;
     player.roundScore += points;
     const entry = { type: 'word', word, playerId: player.id, playerName: player.name, points, bonus, elapsedMs: now - room.turnStartedAt, at: now };
+    // 미션 글자가 사용되면 즉시 새 미션 글자를 제시한다. (방금 쓴 글자는 제외)
+    if (usedMission) {
+      room.mission = pickMissionLetter(missionPool, usedMission);
+      room.missionSeq += 1;
+      room.missionChange = { seq: room.missionSeq, from: usedMission, to: room.mission, playerName: player.name, word };
+      entry.missionFrom = usedMission;
+      entry.missionTo = room.mission;
+    }
     room.words.push(entry);
     room.matchWords.push(entry);
     room.matchWordCount += 1;
@@ -489,7 +502,7 @@ io.on('connection', socket => {
       startTurn(room, next);
       broadcast(room);
     }
-    sendAck(callback, { ok: true, word, points, bonus });
+    sendAck(callback, { ok: true, word, points, bonus, newMission: usedMission ? room.mission : '' });
   });
 
   socket.on('game:rematch', (payload = {}, callback) => {
