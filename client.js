@@ -533,44 +533,51 @@
     const summaryHtml = showSummary ? summaryMarkup(room, isHost, firstShow) : '';
     const reactionBar = `<section class="reaction-bar" aria-label="이모지 반응"><span class="reaction-label">REACT</span><div class="reaction-buttons">${REACTIONS.map(emoji => `<button type="button" class="reaction-button" data-emoji="${emoji}" aria-label="${emoji} 반응 보내기">${emoji}</button>`).join('')}</div></section>`;
     app.innerHTML = `
-      <section class="fade-in">
-        <div class="game-topline"><span class="game-tag">LIVE WORD BATTLE</span><span class="game-code">ROOM ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존 <span class="footer-dot">·</span> ${wordCount}개 단어</span></div>
-        ${winnerContent}
-        <div class="game-layout">
-          <div class="game-main">
-            <section class="turn-card">
-              <div class="turn-label">${finished ? 'MATCH COMPLETE' : 'CURRENT TURN'}</div>
-              <div class="turn-name">${turnName}</div>
-              <div class="turn-hint">${finished ? '친구들과 한 판 더 즐겨 보세요.' : turnHint}</div>
-              <div class="turn-clock"><span class="clock-icon">◷</span><span id="clock-number" class="clock-number">${isPlaying ? room.settings.turnSeconds : '—'}</span></div>
-              <div class="timer-track"><div id="timer-fill" class="timer-fill"></div></div>
-            </section>
-            <section class="chain-card">
-              <div class="chain-top"><span>WORD CHAIN</span><span>${wordCount === 0 ? 'START' : `WORD ${String(wordCount).padStart(2, '0')}`}</span></div>
-              <div class="chain-current">${chain ? `<span class="chain-word">${escapeHtml(chain.word)}</span><span class="chain-arrow">→</span><span class="required-chip">NEXT <strong>${allowedChip}</strong></span>` : '<span class="chain-word empty">첫 단어를 기다리고 있어요</span>'}</div>
-              <form id="word-form" class="entry-form">
-                <input id="word-input" class="text-input" type="text" maxlength="12" autocomplete="off" placeholder="${myTurn ? (room.lastSyllable ? `${allowedPlaceholder}(으)로 시작하는 단어` : '첫 단어를 입력하세요') : '내 차례를 기다려 주세요'}" ${myTurn ? '' : 'disabled'}>
-                <button class="primary-button" type="submit" ${myTurn ? '' : 'disabled'}>단어 제출</button>
-              </form>
-              <div class="entry-help"><span>${myTurn ? '<strong>ENTER</strong> 키로 빠르게 제출할 수 있어요.' : '순서가 되면 입력창이 활성화돼요.'}</span><span>중복 단어 사용 불가</span></div>
-            </section>
-            ${reactionBar}
-            <section class="panel history-panel">
-              <div class="panel-header"><span class="panel-title">단어 기록</span><span class="panel-caption">${wordCount} WORDS</span></div>
-              <div id="history-list" class="history-list">${history || '<div class="history-empty">아직 입력된 단어가 없어요.<br>첫 번째 단어의 주인공이 되어 보세요!</div>'}</div>
-            </section>
+      <section class="fade-in game-screen">
+        <div class="game-topline">
+          <div class="game-top-actions">
+            <button id="leave-room" class="ghost-button danger-button">방 나가기</button>
+            <button id="copy-invite" class="ghost-button">초대 링크 복사</button>
+            ${finished && room.summary ? '<button id="open-summary" class="secondary-button">결과 요약 보기</button>' : ''}
+            ${finished && isHost ? '<button id="rematch" class="primary-button">다시 플레이 ↗</button>' : finished ? '<button class="secondary-button" disabled>방장이 다시 시작할 수 있어요</button>' : ''}
           </div>
-          <aside class="game-sidebar">
-            <section class="panel score-panel"><div class="panel-header"><span class="panel-title">플레이어 순위</span><span class="panel-caption">SCORE</span></div><div class="score-list">${scoreRows}</div></section>
-            <section class="panel rules-panel"><h3 class="rules-title">게임 규칙</h3><div class="rule-line"><i class="rule-dot"></i><span>마지막 글자로 시작하는 단어를 입력해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>단어는 2~12글자, 사전에 등록된 단어만 가능해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>한 번 사용한 단어는 다시 사용할 수 없어요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>시간이 끝나면 탈락하고, 글자 수 × 10점을 얻어요.</span></div></section>
-          </aside>
+          <div class="game-top-info"><span class="game-tag">LIVE WORD BATTLE</span><span class="game-code">ROOM ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존 <span class="footer-dot">·</span> ${wordCount}개 단어</span></div>
         </div>
-        <div class="game-bottom-actions">
-          ${finished && room.summary ? '<button id="open-summary" class="secondary-button">결과 요약 보기</button>' : ''}
-          ${finished && isHost ? '<button id="rematch" class="primary-button">다시 플레이 ↗</button>' : finished ? '<button class="secondary-button" disabled>방장이 다시 시작할 수 있어요</button>' : ''}
-          <button id="leave-room" class="ghost-button danger-button">방 나가기</button>
-          <button id="copy-invite" class="ghost-button">초대 링크 복사</button>
+        ${winnerContent}
+        <section class="turn-card stage">
+          <div class="stage-side stage-next">
+            <span class="stage-side-label">NEXT</span>
+            <strong class="stage-letter">${allowedChip || '?'}</strong>
+          </div>
+          <div class="stage-center">
+            <div class="turn-label">${finished ? 'MATCH COMPLETE' : 'CURRENT TURN'}</div>
+            <div class="turn-name">${turnName}</div>
+            <div class="turn-hint">${finished ? '친구들과 한 판 더 즐겨 보세요.' : turnHint}</div>
+            <div class="chain-current">${chain ? `<span class="chain-word">${escapeHtml(chain.word)}</span>` : '<span class="chain-word empty">첫 단어를 기다리고 있어요</span>'}</div>
+            <div class="timer-track"><div id="timer-fill" class="timer-fill"></div></div>
+          </div>
+          <div class="stage-side stage-chain">
+            <span class="stage-side-label">CHAIN</span>
+            <strong class="stage-letter">${wordCount}</strong>
+            <div class="turn-clock"><span class="clock-icon">◷</span><span id="clock-number" class="clock-number">${isPlaying ? room.settings.turnSeconds : '—'}</span></div>
+          </div>
+        </section>
+        <div class="players-row">
+          <section class="panel score-panel"><div class="panel-header"><span class="panel-title">플레이어 순위</span><span class="panel-caption">SCORE</span></div><div class="score-list">${scoreRows}</div></section>
+          <section class="panel rules-panel"><h3 class="rules-title">게임 규칙</h3><div class="rule-line"><i class="rule-dot"></i><span>마지막 글자로 시작하는 단어를 입력해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>단어는 2~12글자, 사전에 등록된 단어만 가능해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>한 번 사용한 단어는 다시 사용할 수 없어요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>시간이 끝나면 탈락하고, 글자 수 × 10점을 얻어요.</span></div></section>
         </div>
+        <section class="panel history-panel chat-panel">
+          <div class="panel-header"><span class="panel-title">단어 기록</span><span class="panel-caption">${wordCount} WORDS</span></div>
+          <div id="history-list" class="history-list">${history || '<div class="history-empty">아직 입력된 단어가 없어요.<br>첫 번째 단어의 주인공이 되어 보세요!</div>'}</div>
+          <div class="chat-entry">
+            <form id="word-form" class="entry-form">
+              <input id="word-input" class="text-input" type="text" maxlength="12" autocomplete="off" placeholder="${myTurn ? (room.lastSyllable ? `${allowedPlaceholder}(으)로 시작하는 단어` : '첫 단어를 입력하세요') : '내 차례를 기다려 주세요'}" ${myTurn ? '' : 'disabled'}>
+              <button class="primary-button" type="submit" ${myTurn ? '' : 'disabled'}>단어 제출</button>
+            </form>
+            <div class="entry-help"><span>${myTurn ? '<strong>ENTER</strong> 키로 빠르게 제출할 수 있어요.' : '순서가 되면 입력창이 활성화돼요.'}</span><span>중복 단어 사용 불가</span></div>
+          </div>
+        </section>
+        ${reactionBar}
       </section>${summaryHtml}`;
     document.body.classList.toggle('modal-open', showSummary);
     $('#word-form').addEventListener('submit', submitWord);

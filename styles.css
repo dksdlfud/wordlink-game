@@ -259,9 +259,6 @@ button { cursor: pointer; }
 .topbar-tag { order: 2; }
 
 @media (min-width: 851px) {
-  /* 게임: 사이드바(순위·규칙)를 왼쪽으로 */
-  .game-layout { grid-template-columns: 300px minmax(0, 1fr); }
-  .game-sidebar { order: -1; position: sticky; top: 18px; }
   /* 대기실: 게임 설정을 왼쪽, 플레이어 목록을 오른쪽으로 */
   .lobby-grid { grid-template-columns: .8fr 1.2fr; }
   .lobby-grid > .settings-panel { order: -1; }
@@ -353,4 +350,39 @@ body.modal-open { overflow: hidden; }
 }
 @media (prefers-reduced-motion: reduce) {
   .reaction-float { animation: reaction-fade 1.6s ease both !important; transform: translateX(-50%); }
+}
+
+/* ===== 게임 화면 재배치 (참고 이미지 구성) =====
+   상단: 버튼 / 중앙: [다음 글자] 단어·타이머 [체인] / 아래: 플레이어 → 기록 + 입력 */
+.game-topline { gap: 12px; flex-wrap: wrap; }
+.game-top-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.game-top-actions button { min-height: 36px; padding: 0 14px; font-size: 11px; }
+.game-top-info { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+.stage { display: grid; grid-template-columns: 130px minmax(0, 1fr) 130px; gap: 20px; align-items: center; padding: 22px 24px; }
+.stage-center { position: relative; z-index: 1; min-width: 0; text-align: center; }
+.stage-center .chain-current { min-height: 64px; margin-top: 6px; }
+.stage-center .timer-track { margin-top: 10px; }
+.stage-side { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 118px; padding: 14px 10px; border: 1px solid var(--line-strong); border-radius: 14px; background: rgba(255,255,255,.04); }
+.stage-side-label { color: #8d8d95; font-size: 9px; font-weight: 800; letter-spacing: .16em; }
+.stage-letter { color: var(--mint); font-size: 34px; font-weight: 900; line-height: 1.1; letter-spacing: -.03em; text-align: center; word-break: keep-all; font-variant-numeric: tabular-nums; }
+.stage .turn-clock { position: static; }
+.players-row { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 14px; align-items: start; margin-top: 14px; }
+.players-row .score-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; padding: 0 14px 14px; }
+.players-row .score-row { border: 1px solid var(--line); border-radius: 12px; padding: 10px 11px; }
+.chat-panel { margin-top: 14px; }
+.chat-entry { padding: 0 16px 14px; }
+.chat-entry .entry-form { margin-top: 4px; }
+.game-screen .reaction-bar { margin-top: 14px; }
+
+@media (max-width: 850px) {
+  .players-row { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .game-top-info { margin-left: 0; width: 100%; justify-content: space-between; }
+  .game-top-actions { width: 100%; }
+  .game-top-actions button { flex: 1; }
+  .stage { grid-template-columns: 1fr 1fr; gap: 10px; padding: 16px; }
+  .stage-center { grid-column: 1 / -1; grid-row: 1; }
+  .stage-side { min-height: 96px; align-self: stretch; }
+  .stage-letter { font-size: 28px; }
 }
