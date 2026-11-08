@@ -27,9 +27,49 @@
     nickname: null,          // 로비에 입장한 닉네임 (없으면 홈 화면)
     hub: { rooms: [], users: [], total: 0, chat: [], onlyJoinable: false },
     dialogClose: null,
-    draft: { key: '', value: '' } // 입력 중인 단어 (화면이 다시 그려져도 유지)
+    draft: { key: '', value: '' }, // 입력 중인 단어 (화면이 다시 그려져도 유지)
+    screen: '',   // 지금 보이는 화면 종류 (home · hub · lobby · game) — 같은 화면을 다시 그릴 땐 등장 애니메이션을 생략한다.
+    shown: null   // 직전에 그린 게임 화면의 스냅샷 — 무엇이 바뀌었는지 비교해 필요한 곳만 움직인다.
   };
   const CHAT_MAX_LENGTH = 120;
+
+  // 같은 화면을 다시 그릴 때는 fade-in이 매번 처음부터 재생돼 깜빡이므로, 화면이 '바뀔 때만' 등장 효과를 쓴다.
+  function enterScreen(key) {
+    const same = state.screen === key;
+    state.screen = key;
+    // 무한 반복 애니메이션이 화면을 다시 그려도 끊기지 않고 이어지도록 위상을 맞춘다.
+    document.documentElement.style.setProperty('--ph', `${Math.round(performance.now())}ms`);
+    return same;
+  }
+  function settleScreen(same) {
+    if (!same) return;
+    const section = app.firstElementChild;
+    if (section) section.classList.remove('fade-in');
+  }
+  // 목록을 통째로 갈아엎지 않고 달라진 항목만 바꾼다. (호버·애니메이션이 끊기지 않고, 새 항목만 부드럽게 등장)
+  function patchList(container, items, keyOf, htmlOf, enterClass) {
+    const hadItems = Boolean(container.querySelector('[data-key]'));
+    const old = new Map();
+    for (const el of container.children) if (el.dataset && el.dataset.key) old.set(el.dataset.key, el);
+    const nodes = items.map(item => {
+      const key = String(keyOf(item));
+      const html = htmlOf(item).trim();
+      const prev = old.get(key);
+      if (prev && prev.dataset.sig === html) return prev;
+      const tpl = document.createElement('template');
+      tpl.innerHTML = html;
+      const fresh = tpl.content.firstElementChild;
+      fresh.dataset.key = key;
+      fresh.dataset.sig = html;
+      if (!prev && hadItems && enterClass) fresh.classList.add(enterClass);
+      return fresh;
+    });
+    const keep = new Set(nodes);
+    for (const el of [...container.children]) if (!keep.has(el)) el.remove();
+    nodes.forEach((node, index) => {
+      if (container.children[index] !== node) container.insertBefore(node, container.children[index] || null);
+    });
+  }
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -289,8 +329,13 @@
   }
   function closeSummary() {
     if (!state.room) return;
-    state.summaryClosedGame = state.room.gameId;
-    render();
+    const gameId = state.room.gameId;
+    const node = $('#summary-backdrop');
+    const finish = () => { state.summaryClosedGame = gameId; render(); };
+    if (!node) { finish(); return; }
+    if (node.classList.contains('leaving')) return;
+    node.classList.add('leaving');
+    setTimeout(finish, 230);
   }
 
   const socket = io({ reconnection: true, reconnectionAttempts: Infinity, reconnectionDelay: 700, reconnectionDelayMax: 5000 });
@@ -356,7 +401,12 @@
   }
   function closeDialog() {
     const node = $('#dialog');
-    if (node) node.remove();
+    if (node) {
+      node.removeAttribute('id');
+      node.classList.add('closing');
+      node.addEventListener('animationend', event => { if (event.target === node) node.remove(); });
+      setTimeout(() => node.remove(), 450);
+    }
     document.body.classList.remove('dialog-open');
     const callback = state.dialogClose;
     state.dialogClose = null;
@@ -388,6 +438,7 @@
 
   // ---------- 홈 (닉네임 입력) ----------
   function renderHome() {
+    const sameScreen = enterScreen('home');
     document.body.classList.remove('modal-open');
     closeDialog();
     const rawCode = new URLSearchParams(location.search).get('room') || '';
@@ -428,6 +479,7 @@
     $('#enter-lobby').addEventListener('click', () => enter(''));
     $('#display-name').addEventListener('keydown', event => { if (event.key === 'Enter') enter(''); });
     if ($('#join-invite')) $('#join-invite').addEventListener('click', () => enter(inviteCode));
+    settleScreen(sameScreen);
   }
 
   function readNickname() {
@@ -472,6 +524,7 @@
     return '로비';
   }
   function mountHub() {
+    enterScreen('hub');
     document.body.classList.remove('modal-open');
     closeDialog();
     if (!$('#hub')) {
@@ -535,12 +588,13 @@
     const list = $('#hub-user-list');
     if (!list) return;
     $('#hub-user-count').textContent = `${state.hub.total}명`;
-    list.innerHTML = state.hub.users.map(user => `
+    if (!state.hub.users.length) { list.innerHTML = '<li class="hub-empty">접속자가 없어요.</li>'; return; }
+    patchList(list, state.hub.users, user => user.name, user => `
       <li class="hub-user${user.name === state.nickname ? ' me' : ''}">
         ${avatar(user.name, true)}
         <span class="hub-user-name">${escapeHtml(user.name)}${user.name === state.nickname ? ' <em>(나)</em>' : ''}</span>
         <span class="hub-user-where ${user.where}">${whereLabel(user)}</span>
-      </li>`).join('') || '<li class="hub-empty">접속자가 없어요.</li>';
+      </li>`, 'enter');
   }
   function roomCardHtml(room) {
     const status = room.state === 'playing' ? 'playing' : room.joinable ? 'waiting' : 'full';
@@ -559,18 +613,23 @@
     if (!grid) return;
     const rooms = state.hub.onlyJoinable ? state.hub.rooms.filter(room => room.joinable) : state.hub.rooms;
     $('#hub-room-count').textContent = `${state.hub.rooms.length}개`;
-    grid.innerHTML = rooms.length
-      ? rooms.map(roomCardHtml).join('')
-      : `<div class="hub-empty">${state.hub.rooms.length ? '입장할 수 있는 방이 없어요.' : '아직 열린 방이 없어요.<br>첫 번째 방을 만들어 보세요!'}</div>`;
+    if (!rooms.length) {
+      grid.innerHTML = `<div class="hub-empty">${state.hub.rooms.length ? '입장할 수 있는 방이 없어요.' : '아직 열린 방이 없어요.<br>첫 번째 방을 만들어 보세요!'}</div>`;
+      return;
+    }
+    patchList(grid, rooms, room => room.code, roomCardHtml, 'enter');
   }
   function updateProfile() {
     const body = $('#hub-profile-body');
     if (!body) return;
     const summary = $('#hub-summary');
     if (summary) summary.textContent = `방 ${state.hub.rooms.length}개 · 접속자 ${state.hub.total}명`;
-    body.innerHTML = `
+    const html = `
       <div class="hub-profile-main">${avatar(state.nickname)}<div><strong>${escapeHtml(state.nickname)}</strong><small>로비에서 대기 중</small></div></div>
       <button id="hub-rename" class="ghost-button button-full" type="button">닉네임 변경</button>`;
+    if (body.dataset.sig === html) return;
+    body.dataset.sig = html;
+    body.innerHTML = html;
     $('#hub-rename').addEventListener('click', leaveLobby);
   }
   function chatLineHtml(message) {
@@ -581,7 +640,7 @@
     const log = $('#hub-chat-log');
     if (!log) return;
     log.innerHTML = state.hub.chat.length ? state.hub.chat.map(chatLineHtml).join('') : '<div class="chat-empty">아직 대화가 없어요. 첫 인사를 건네 보세요!</div>';
-    log.scrollTop = log.scrollHeight;
+    log.scrollTo({ top: log.scrollHeight, behavior: 'instant' });
   }
   function appendChatLine(message) {
     const log = $('#hub-chat-log');
@@ -589,8 +648,9 @@
     const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
     $('.chat-empty', log)?.remove();
     log.insertAdjacentHTML('beforeend', chatLineHtml(message));
+    log.lastElementChild.classList.add('enter');
     while (log.children.length > 80) log.firstChild.remove();
-    if (nearBottom || message.name === state.nickname) log.scrollTop = log.scrollHeight;
+    if (nearBottom || message.name === state.nickname) log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' });
   }
   async function sendChat(event) {
     event.preventDefault();
@@ -695,6 +755,7 @@
   }
 
   function renderLobby(room) {
+    const sameScreen = enterScreen('lobby');
     document.body.classList.remove('modal-open');
     const mine = room.players.find(player => player.id === state.session.playerId);
     const isHost = room.hostId === state.session.playerId;
@@ -781,6 +842,7 @@
     $('#copy-invite').addEventListener('click', copyInvite);
     if ($('#apply-settings')) $('#apply-settings').addEventListener('click', applySettings);
     if ($('#start-game')) $('#start-game').addEventListener('click', startGame);
+    settleScreen(sameScreen);
   }
   async function applySettings() {
     const result = await request('room:settings', {
@@ -816,6 +878,12 @@
   }
 
   function renderGame(room) {
+    const sameScreen = enterScreen('game');
+    const prev = sameScreen && state.shown && state.shown.gameId === room.gameId ? state.shown : null;
+    const keepScroll = {
+      history: $('#history-list') ? $('#history-list').scrollTop : 0,
+      scores: $('.score-list') ? $('.score-list').scrollLeft : 0
+    };
     const mine = room.players.find(player => player.id === state.session.playerId);
     const isHost = room.hostId === state.session.playerId;
     const isPlaying = room.state === 'playing';
@@ -827,15 +895,19 @@
     const scoreRows = sortedPlayers.map(player => {
       const current = player.id === room.currentPlayerId;
       const status = player.eliminated ? '탈락' : !player.online ? '연결 끊김' : current ? '현재 차례' : '플레이 중';
-      return `<div class="score-row ${current ? 'current' : ''} ${player.eliminated ? 'eliminated' : ''}">
+      const arrive = current && prev && prev.currentPlayerId !== room.currentPlayerId;
+      const bump = prev && prev.scores[player.id] != null && player.score > prev.scores[player.id];
+      return `<div class="score-row ${current ? 'current' : ''}${arrive ? ' arrive' : ''} ${player.eliminated ? 'eliminated' : ''}">
         ${avatar(player.name, true)}
         <div class="score-name">${escapeHtml(player.name)}<span class="score-state">${status}${room.totalRounds > 1 ? ` · ${player.roundWins}승` : ''}</span></div>
-        <span class="score-points">${player.score}</span>
+        <span class="score-points${bump ? ' bump' : ''}">${player.score}</span>
       </div>`;
     }).join('');
+    const addedEntries = prev ? Math.max(0, room.words.length - prev.entryCount) : 0;
     const history = room.words.slice().reverse().map((item, reverseIndex) => {
-      if (item.type === 'system') return `<div class="history-system">${escapeHtml(item.text)}</div>`;
-      return `<div class="history-item"><span class="history-index">${String(room.words.filter(entry => entry.type === 'word').indexOf(item) + 1).padStart(2, '0')}</span>${avatar(item.playerName, true)}<span class="history-word">${escapeHtml(item.word)}</span><span class="history-player">${escapeHtml(item.playerName)}</span><span class="history-points">${item.missions ? `<em class="history-bonus">🎯×${item.missions}</em> ` : ''}+${item.points}</span></div>`;
+      const enter = reverseIndex < addedEntries ? ' enter' : '';
+      if (item.type === 'system') return `<div class="history-system${enter}">${escapeHtml(item.text)}</div>`;
+      return `<div class="history-item${enter}"><span class="history-index">${String(room.words.filter(entry => entry.type === 'word').indexOf(item) + 1).padStart(2, '0')}</span>${avatar(item.playerName, true)}<span class="history-word">${escapeHtml(item.word)}</span><span class="history-player">${escapeHtml(item.playerName)}</span><span class="history-points">${item.missions ? `<em class="history-bonus">🎯×${item.missions}</em> ` : ''}+${item.points}</span></div>`;
     }).join('');
     const finished = room.state === 'finished';
     const winnerContent = finished ? `<div class="finished-banner"><div class="trophy">🏆</div><h2>${room.winnerName ? `${escapeHtml(room.winnerName)} 승리!` : '게임 종료'}</h2></div>` : '';
@@ -851,6 +923,10 @@
     const allowedPlaceholder = allowed.join(' · ');
     const turnHint = onBreak ? '' : myTurn ? (room.lastSyllable ? `${allowedLabel}(으)로 시작` : '첫 단어를 입력하세요') : '';
     const chain = room.words.filter(item => item.type === 'word').slice(-1)[0];
+    const newWord = Boolean(prev) && wordCount > prev.wordCount;
+    const turnChanged = Boolean(prev) && prev.currentPlayerId !== room.currentPlayerId;
+    const allowedKey = allowed.join('|');
+    const letterChanged = Boolean(prev) && prev.allowedKey !== allowedKey;
     const showSummary = finished && Boolean(room.summary) && state.summaryClosedGame !== room.gameId;
     const firstShow = showSummary && state.summaryShownGame !== room.gameId;
     if (showSummary) state.summaryShownGame = room.gameId;
@@ -900,7 +976,7 @@
         <section class="turn-card stage">
           <div class="stage-side stage-next">
             <span class="stage-side-label">다음 글자</span>
-            <strong class="stage-letter">${allowedChip || '?'}</strong>
+            <strong class="stage-letter${letterChanged ? ' swap' : ''}">${allowedChip || '?'}</strong>
           </div>
           <div class="stage-side stage-mission${state.missionFlashSeq && room.missionChange && room.missionChange.seq === state.missionFlashSeq ? ' mission-new' : ''}">
             <span class="stage-side-label">미션</span>
@@ -908,9 +984,9 @@
           </div>
           <div class="stage-center">
             <div class="turn-label">${finished ? '경기 종료' : onBreak ? '라운드 휴식' : '현재 차례'}</div>
-            <div class="turn-name">${turnName}</div>
+            <div class="turn-name${turnChanged ? ' swap' : ''}">${turnName}</div>
             ${finished || !turnHint ? '' : `<div class="turn-hint">${turnHint}</div>`}
-            <div class="chain-current">${chain ? `<span class="chain-word">${escapeHtml(chain.word)}</span>` : '<span class="chain-word empty">첫 단어를 기다리고 있어요</span>'}</div>
+            <div class="chain-current">${chain ? `<span class="chain-word${newWord ? ' pop' : ''}">${escapeHtml(chain.word)}</span>` : '<span class="chain-word empty">첫 단어를 기다리고 있어요</span>'}</div>
             <div class="timer-track"><div id="timer-fill" class="timer-fill"></div></div>
           </div>
           <div class="stage-side stage-chain">
@@ -947,8 +1023,22 @@
     }
     setupEntry(room, { myTurn, allowed, turnKey });
     updateClock();
+    settleScreen(sameScreen);
+    // 화면을 다시 그려도 스크롤 위치를 지킨다. 새 단어가 들어왔을 때만 맨 위로 부드럽게 올린다.
     const historyNode = $('#history-list');
-    if (historyNode) historyNode.scrollTop = 0;
+    if (historyNode) {
+      if (newWord || addedEntries) {
+        historyNode.scrollTo({ top: Math.min(keepScroll.history, historyNode.scrollHeight), behavior: 'instant' });
+        historyNode.scrollTo({ top: 0, behavior: 'smooth' });
+      } else historyNode.scrollTo({ top: keepScroll.history, behavior: 'instant' });
+    }
+    const scoreNode = $('.score-list');
+    if (scoreNode && keepScroll.scores) scoreNode.scrollLeft = keepScroll.scores;
+    state.shown = {
+      gameId: room.gameId, wordCount, entryCount: room.words.length, allowedKey,
+      currentPlayerId: room.currentPlayerId,
+      scores: Object.fromEntries(room.players.map(player => [player.id, player.score]))
+    };
   }
   // ---------- 단어 입력 ----------
   // 입력하는 동안 규칙을 바로 알려 준다. (최종 판정은 항상 서버가 한다)
@@ -1060,34 +1150,64 @@
     const total = Math.max(0, Math.ceil(ms / 1000));
     return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
   }
+  // 타이머는 매 프레임(rAF) 계산해 GPU 변환(translate)으로만 움직인다. 숫자는 값이 바뀔 때만 다시 쓴다.
+  const clockView = { fill: null, number: null, round: null, count: null, frac: 1, turnKey: '', from: 1, t0: 0, applied: '' };
+  const REFILL_MS = 340;
+  function cached(name, selector) {
+    const node = clockView[name];
+    if (node && node.isConnected) return node;
+    clockView[name] = $(selector);
+    if (name === 'fill') clockView.applied = '';
+    return clockView[name];
+  }
+  function setText(node, text) { if (node.textContent !== text) node.textContent = text; }
   function updateClock() {
     const room = state.room;
     if (!room) return;
     if (room.state === 'intermission') {
-      const count = $('#break-count');
-      if (count) count.textContent = String(Math.max(0, Math.ceil(((room.nextRoundAt || Date.now()) - Date.now()) / 1000)));
+      const count = cached('count', '#break-count');
+      if (count) setText(count, String(Math.max(0, Math.ceil(((room.nextRoundAt || Date.now()) - Date.now()) / 1000))));
       return;
     }
-    if (room.state !== 'playing') return;
-    const roundClock = $('#round-clock');
+    if (room.state !== 'playing') { clockView.frac = 1; clockView.turnKey = ''; return; }
+    const now = Date.now();
+    const roundClock = cached('round', '#round-clock');
     if (roundClock) {
-      const left = Math.max(0, (room.roundEndsAt || Date.now()) - Date.now());
-      roundClock.textContent = formatClock(left);
-      roundClock.classList.toggle('low', left <= 10000);
+      const left = Math.max(0, (room.roundEndsAt || now) - now);
+      setText(roundClock, formatClock(left));
+      const low = left <= 10000;
+      if (roundClock.classList.contains('low') !== low) roundClock.classList.toggle('low', low);
     }
-    const number = $('#clock-number');
-    const fill = $('#timer-fill');
+    const number = cached('number', '#clock-number');
+    const fill = cached('fill', '#timer-fill');
     if (!number || !fill) return;
     const duration = room.turnDurationMs || room.turnSeconds * 1000;
-    const remaining = Math.max(0, (room.turnEndsAt || Date.now()) - Date.now());
+    const remaining = Math.max(0, (room.turnEndsAt || now) - now);
     const seconds = Math.ceil(remaining / 1000);
-    number.textContent = String(seconds);
-    fill.style.width = `${Math.max(0, Math.min(100, remaining / duration * 100))}%`;
-    fill.classList.toggle('low', seconds <= 5);
-    if (state.session && room.currentPlayerId === state.session.playerId && seconds > 0 && seconds <= 3) {
-      const key = `${room.turnEndsAt}:${seconds}`;
-      if (state.lastTick !== key) { state.lastTick = key; sound.play('tick'); }
+    setText(number, String(seconds));
+    // 새 차례가 시작되면 막대가 뚝 차오르지 않고 부드럽게 채워진다.
+    const key = `${room.gameId}:${room.round}:${room.turnEndsAt}`;
+    const perf = performance.now();
+    if (clockView.turnKey !== key) { clockView.turnKey = key; clockView.from = clockView.frac; clockView.t0 = perf; }
+    const target = Math.max(0, Math.min(1, remaining / duration));
+    let frac = target;
+    if (target > clockView.from) {
+      const progress = Math.min(1, (perf - clockView.t0) / REFILL_MS);
+      frac = clockView.from + (target - clockView.from) * (1 - Math.pow(1 - progress, 3));
     }
+    clockView.frac = frac;
+    const transform = `translate3d(${((frac - 1) * 100).toFixed(3)}%,0,0)`;
+    if (clockView.applied !== transform) { fill.style.transform = transform; clockView.applied = transform; }
+    const low = seconds <= 5;
+    if (fill.classList.contains('low') !== low) fill.classList.toggle('low', low);
+    if (state.session && room.currentPlayerId === state.session.playerId && seconds > 0 && seconds <= 3) {
+      const tickKey = `${room.turnEndsAt}:${seconds}`;
+      if (state.lastTick !== tickKey) { state.lastTick = tickKey; sound.play('tick'); }
+    }
+  }
+  function frameLoop() {
+    updateClock();
+    requestAnimationFrame(frameLoop);
   }
 
   function render() {
@@ -1104,7 +1224,7 @@
     else if (event.key === 'Escape' && document.body.classList.contains('modal-open')) closeSummary();
   });
 
-  setInterval(updateClock, 180);
+  requestAnimationFrame(frameLoop);
   setConnection(false);
   renderHome();
 })();

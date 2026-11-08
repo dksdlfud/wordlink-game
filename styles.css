@@ -1260,3 +1260,172 @@ body.dialog-open { overflow: hidden; }
   .entry-hint { margin-top: 5px; min-height: 18px; font-size: 12px; }
 }
 .entry-card:not(.is-mine) .entry-hint { display: none; }
+
+
+/* =====================================================================
+   🧈 SMOOTH v4 — 애니메이션 극한 부드럽게 (맨 아래 블록)
+   · 모든 움직임은 transform / opacity 위주(GPU 합성)로, 레이아웃·페인트 부담을 최소화
+   · 타이머는 JS가 매 프레임(rAF) translate로 움직이고, 색 전환은 오버레이 opacity로 처리
+   · 이 블록만 지우면 이전 모양으로 돌아갑니다.
+   ===================================================================== */
+:root {
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --spring: cubic-bezier(.34, 1.56, .64, 1);
+}
+html { -webkit-tap-highlight-color: transparent; }
+body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+/* ── 화면 등장 ── */
+@keyframes rise {
+  from { opacity: 0; transform: translate3d(0, 14px, 0) scale(.992); }
+  to   { opacity: 1; transform: none; }
+}
+.fade-in { animation: rise .55s var(--ease-out) both; }
+
+/* ── 버튼: 그라디언트를 바꿔치기하지 않고 밝기만 바꿔서 끊김 없이 ── */
+.primary-button, .secondary-button, .ghost-button, .hub-tab, .reaction-button, .entry-chip, .sound-toggle, .summary-close {
+  transition: transform .3s var(--ease-out), box-shadow .3s var(--ease-out), background-color .25s ease,
+              filter .25s ease, border-color .25s ease, color .25s ease, opacity .25s ease;
+  -webkit-backface-visibility: hidden; backface-visibility: hidden;
+}
+.primary-button:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffa83a, #ef7a1a); filter: brightness(1.07) saturate(1.05);
+  transform: translate3d(0, -2px, 0); box-shadow: 0 6px 0 #b85a0c;
+}
+.primary-button:active:not(:disabled) {
+  transform: translate3d(0, 3px, 0) scale(.985); box-shadow: 0 1px 0 #b85a0c; filter: brightness(.98);
+  transition-duration: .09s;
+}
+.secondary-button:hover:not(:disabled) {
+  background: linear-gradient(180deg, #4ea8ff, #2f7fe0); filter: brightness(1.08);
+  transform: translate3d(0, -2px, 0); box-shadow: 0 6px 0 #1f5fb0;
+}
+.secondary-button:active:not(:disabled) { transform: translate3d(0, 3px, 0) scale(.985); box-shadow: 0 1px 0 #1f5fb0; transition-duration: .09s; }
+.ghost-button:hover:not(:disabled) { transform: translate3d(0, -2px, 0); box-shadow: 0 5px 0 rgba(110, 70, 20, .22); }
+.ghost-button:active:not(:disabled) { transform: translate3d(0, 2px, 0) scale(.985); box-shadow: 0 1px 0 rgba(110, 70, 20, .22); transition-duration: .09s; }
+.danger-button:hover:not(:disabled) { box-shadow: 0 5px 0 rgba(196, 52, 62, .28); }
+.hub-tab:hover { transform: translate3d(0, -2px, 0); }
+.hub-tab:active { transform: translate3d(0, 2px, 0) scale(.985); transition-duration: .09s; }
+.hub-tab.primary:hover { background: linear-gradient(180deg, #ffa83a, #ef7a1a); filter: brightness(1.07); }
+.reaction-button:hover { transform: translate3d(0, -3px, 0) scale(1.08); }
+.reaction-button:active { transform: scale(.88); transition-duration: .08s; }
+.entry-chip { transition-timing-function: var(--ease-out); }
+.entry-chip:not(:disabled):hover { transform: translate3d(0, -2px, 0) scale(1.05); }
+
+/* ── 입력창 ── */
+.text-input, .select-input { transition: border-color .25s var(--ease-out), box-shadow .35s var(--ease-out), background-color .25s ease; }
+.entry-card .entry-form .text-input { transition: border-color .25s var(--ease-out), box-shadow .35s var(--ease-out), background-color .25s ease; }
+.entry-card { transition: background-color .4s ease, box-shadow .4s ease, border-color .4s ease; }
+
+/* 내 차례 표시: 박스 그림자를 계속 다시 그리지 않고, 후광 레이어의 opacity만 천천히 숨 쉬듯 */
+.entry-card.is-mine { animation: none; }
+.entry-card::after {
+  content: ''; position: absolute; inset: -3px; border-radius: 21px; pointer-events: none;
+  box-shadow: 0 0 0 10px rgba(143, 220, 79, .2); opacity: 0; transition: opacity .4s ease;
+}
+.entry-card.is-mine::after { animation: entry-halo 2.4s ease-in-out infinite; animation-delay: calc(var(--ph, 0ms) * -1); }
+.entry-card.has-warn::after { animation: none; opacity: 0; }
+@keyframes entry-halo { 0%, 100% { opacity: .15; } 50% { opacity: 1; } }
+
+/* 오류 흔들림: 점점 잦아드는 감쇠 진동 */
+@keyframes entry-shake {
+  0%   { transform: translate3d(0, 0, 0); }
+  14%  { transform: translate3d(-9px, 0, 0); }
+  30%  { transform: translate3d(7px, 0, 0); }
+  46%  { transform: translate3d(-5px, 0, 0); }
+  62%  { transform: translate3d(3px, 0, 0); }
+  80%  { transform: translate3d(-1.5px, 0, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+.entry-card .text-input.shake { animation: entry-shake .5s var(--ease-out); }
+
+/* ── 타이머 막대: translate 로만 움직임(레이아웃 없음) + 둥근 끝 유지 ── */
+.timer-track { contain: paint; }
+.timer-fill {
+  position: relative; width: 100%; transition: none; will-change: transform; transform: translate3d(0, 0, 0);
+  background: linear-gradient(180deg, #5cb2ff, #2b78e4);
+}
+.timer-fill::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(180deg, #ff8a7a, #e0483d); box-shadow: inset 0 2px 0 rgba(255, 255, 255, .35);
+  opacity: 0; transition: opacity .5s var(--ease-out);
+}
+.timer-fill.low { background: linear-gradient(180deg, #5cb2ff, #2b78e4); animation: timer-warn .7s ease-in-out infinite alternate; animation-delay: calc(var(--ph, 0ms) * -1); }
+.timer-fill.low::after { opacity: 1; }
+@keyframes timer-warn { from { opacity: 1; } to { opacity: .78; } }
+
+/* ── 글자·단어·점수가 바뀔 때의 움직임 ── */
+.chain-word { display: inline-block; }
+.chain-word.pop { animation: word-pop .6s var(--spring) both; }
+@keyframes word-pop {
+  0%   { opacity: 0; transform: translate3d(0, 16px, 0) scale(.7); }
+  100% { opacity: 1; transform: none; }
+}
+.turn-name.swap { animation: name-swap .5s var(--ease-out) both; }
+@keyframes name-swap { from { opacity: 0; transform: translate3d(0, 9px, 0); } to { opacity: 1; transform: none; } }
+.stage-letter.swap { animation: letter-swap .6s var(--spring) both; }
+@keyframes letter-swap {
+  from { opacity: 0; transform: translate3d(0, -14px, 0) scale(.6) rotate(-8deg); }
+  to   { opacity: 1; transform: none; }
+}
+.score-points.bump { animation: score-bump .65s var(--spring); }
+@keyframes score-bump { 0% { transform: scale(1); } 35% { transform: scale(1.3); } 100% { transform: scale(1); } }
+.score-row.current.arrive { animation: cur-in .55s var(--ease-out) both; }
+@keyframes cur-in { from { transform: scale(.95); opacity: .6; } to { transform: none; opacity: 1; } }
+.score-row { transition: background-color .3s ease, border-color .3s ease, box-shadow .3s ease, opacity .4s ease, filter .4s ease; }
+
+/* 새 단어 기록: 위에서 스르륵 펼쳐지며 아래 줄들이 부드럽게 밀려난다 */
+.history-item.enter, .history-system.enter { animation: hist-in .55s var(--ease-out) both; overflow: hidden; }
+@keyframes hist-in {
+  from { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; transform: translate3d(-14px, -6px, 0); }
+  to   { opacity: 1; max-height: 80px; transform: none; }
+}
+
+/* ── 로비 목록 ── */
+.room-card { transition: transform .32s var(--ease-out), box-shadow .32s var(--ease-out), border-color .25s ease, background-color .25s ease; }
+.room-card:hover { transform: translate3d(0, -3px, 0); }
+.room-card:active { transform: translate3d(0, 1px, 0) scale(.99); transition-duration: .09s; }
+.room-card.enter, .hub-user.enter { animation: card-in .55s var(--ease-out) both; }
+@keyframes card-in { from { opacity: 0; transform: translate3d(0, 12px, 0) scale(.96); } to { opacity: 1; transform: none; } }
+.hub-user { transition: background-color .25s ease; }
+.chat-line.enter { animation: chat-in .45s var(--ease-out) both; }
+@keyframes chat-in { from { opacity: 0; transform: translate3d(-10px, 6px, 0); } to { opacity: 1; transform: none; } }
+.hub-chat-log, .hub-room-grid, .history-list, .hub-user-list, .player-list { overscroll-behavior: contain; }
+
+/* ── 이모지 반응: 구간마다 다른 이징으로 통통 튀며 올라간 뒤 천천히 흩어짐 ── */
+.reaction-float { animation: reaction-up 2.6s linear forwards; backface-visibility: hidden; }
+@keyframes reaction-up {
+  0%   { opacity: 0; transform: translate3d(-50%, 26px, 0) scale(.5); animation-timing-function: cubic-bezier(.2, .9, .3, 1.35); }
+  10%  { opacity: 1; transform: translate3d(-50%, -4px, 0) scale(1.18); animation-timing-function: cubic-bezier(.3, .1, .4, 1); }
+  22%  { opacity: 1; transform: translate3d(calc(-50% + var(--drift, 0px) * .15), -32px, 0) scale(1); animation-timing-function: cubic-bezier(.35, .15, .55, 1); }
+  72%  { opacity: .95; transform: translate3d(calc(-50% + var(--drift, 0px) * .8), -210px, 0) scale(1); animation-timing-function: ease-out; }
+  100% { opacity: 0; transform: translate3d(calc(-50% + var(--drift, 0px)), -285px, 0) scale(.96); }
+}
+
+/* ── 토스트 ── */
+.toast { transform: translate3d(-50%, 18px, 0) scale(.96); transition: opacity .35s var(--ease-out), transform .5s var(--spring); }
+.toast.show { transform: translate3d(-50%, 0, 0) scale(1); }
+
+/* ── 다이얼로그 / 결과 요약: 들어올 때도 나갈 때도 부드럽게 ── */
+@keyframes fade-bg { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fade-bg-out { to { opacity: 0; } }
+@keyframes dialog-in { from { opacity: 0; transform: translate3d(0, 20px, 0) scale(.93); } to { opacity: 1; transform: none; } }
+@keyframes dialog-out { to { opacity: 0; transform: translate3d(0, 12px, 0) scale(.97); } }
+.dialog-backdrop { animation: fade-bg .3s ease both; }
+.dialog-card { animation: dialog-in .5s var(--spring) both; }
+.dialog-backdrop.closing { animation: fade-bg-out .22s ease both; pointer-events: none; }
+.dialog-backdrop.closing .dialog-card { animation: dialog-out .22s var(--ease-in-out) both; }
+.summary-backdrop.enter { animation: fade-bg .32s ease both; }
+.summary-backdrop.enter .summary-card { animation: dialog-in .6s .05s var(--spring) both; }
+.summary-backdrop.leaving { animation: fade-bg-out .23s ease both; pointer-events: none; }
+.summary-backdrop.leaving .summary-card { animation: dialog-out .23s var(--ease-in-out) both; }
+
+/* 미션 성공 팝: 더 쫀득한 이징 */
+.stage-mission.mission-new { animation-timing-function: var(--spring); }
+
+@media (prefers-reduced-motion: reduce) {
+  .entry-card.is-mine::after, .timer-fill.low { animation: none !important; }
+  .fade-in, .chain-word.pop, .stage-letter.swap, .turn-name.swap, .history-item.enter, .history-system.enter,
+  .room-card.enter, .hub-user.enter, .chat-line.enter { animation-duration: .01ms !important; }
+}
