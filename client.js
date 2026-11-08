@@ -9,6 +9,7 @@
   const SESSION_KEY = 'wordlink.session.v1';
   const PLAYER_KEY = 'wordlink.playerId.v1';
   const SOUND_KEY = 'wordlink.sound.v1';
+  const NICKMODE_KEY = 'wordlink.nickmode.v1';
   const REACTIONS = ['👍', '😂', '😮', '🔥', '👏', '😭'];
   const REACTION_COOLDOWN_MS = 350;
   const TOTAL_TIME_OPTIONS = [20, 40, 60, 80, 100, 150, 500];
@@ -25,6 +26,7 @@
     lastTick: '',
     lastReactionAt: 0,
     nickname: null,          // 로비에 입장한 닉네임 (없으면 홈 화면)
+    auth: { providers: [], user: null }, // 소셜 로그인 상태 (/auth/me) — user가 있으면 로그인됨
     hub: { rooms: [], users: [], total: 0, chat: [], onlyJoinable: false },
     dialogClose: null,
     draft: { key: '', value: '' }, // 입력 중인 단어 (화면이 다시 그려져도 유지)
@@ -445,6 +447,9 @@
     closeDialog();
     const rawCode = new URLSearchParams(location.search).get('room') || '';
     const inviteCode = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+    const { user, providers } = state.auth;
+    const socialOk = !!(user && user.suggestedName);
+    const mode = user && socialOk ? nickMode() : 'custom';
     app.innerHTML = `
       <section class="home-layout fade-in">
         <div class="hero-copy">
@@ -460,12 +465,29 @@
         <section class="home-card">
           <div class="card-kicker">LET'S PLAY TOGETHER</div>
           <h2 class="card-heading">로비 입장하기</h2>
-          <p class="card-subtitle">닉네임만 정하면 가입 없이 바로 들어갈 수 있어요.</p>
-          <label class="field-label" for="display-name">플레이어 닉네임</label>
-          <input id="display-name" class="text-input" type="text" maxlength="12" autocomplete="nickname" placeholder="닉네임을 입력하세요" value="${escapeHtml(localStorage.getItem('wordlink.nickname') || '')}">
+          <p class="card-subtitle">${user ? '로그인한 계정으로 입장해요. 닉네임 방식을 골라 주세요.' : '닉네임만 정하면 가입 없이 바로 들어갈 수 있어요.'}</p>
+          ${user ? `
+          <div class="auth-chip"><span>✅ <b>${escapeHtml(user.providerLabel)}</b> 계정으로 로그인됨</span><button id="auth-logout" class="link-button" type="button">로그아웃</button></div>
+          <div class="nick-mode" role="radiogroup" aria-label="닉네임 방식">
+            <label class="nick-option${socialOk ? '' : ' disabled'}">
+              <input type="radio" name="nick-mode" value="social" ${mode === 'social' ? 'checked' : ''} ${socialOk ? '' : 'disabled'}>
+              <span><b>소셜 이름 그대로</b><small>${socialOk ? escapeHtml(user.suggestedName) : '쓸 수 있는 이름이 없어요 (한글·영문·숫자 2~12자)'}</small></span>
+            </label>
+            <label class="nick-option">
+              <input type="radio" name="nick-mode" value="custom" ${mode === 'custom' ? 'checked' : ''}>
+              <span><b>직접 정하기</b><small>원하는 닉네임을 입력해요</small></span>
+            </label>
+          </div>` : ''}
+          <div id="nick-field"${mode === 'social' ? ' hidden' : ''}>
+            <label class="field-label" for="display-name">플레이어 닉네임</label>
+            <input id="display-name" class="text-input" type="text" maxlength="12" autocomplete="nickname" placeholder="닉네임을 입력하세요" value="${escapeHtml(localStorage.getItem('wordlink.nickname') || '')}">
+          </div>
           <button id="enter-lobby" class="primary-button button-full" style="margin-top:18px">로비 입장 <span aria-hidden="true">↗</span></button>
           ${inviteCode ? `<div class="divider-label">초대받은 방이 있어요</div><button id="join-invite" class="secondary-button button-full">방 ${escapeHtml(inviteCode)} 으로 바로 입장</button>` : ''}
-          <p class="home-footnote">계정 가입 없이 게스트로 바로 플레이할 수 있어요.</p>
+          ${!user && providers.length ? `
+          <div class="divider-label">소셜 계정으로 시작</div>
+          <div class="social-row">${providers.map(p => `<a class="social-button social-${escapeHtml(p.id)}" href="/auth/${encodeURIComponent(p.id)}?next=${encodeURIComponent(inviteCode ? `/?room=${inviteCode}` : '/')}"><i aria-hidden="true">${escapeHtml(p.label.slice(0, 1))}</i>${escapeHtml(p.label)}</a>`).join('')}</div>` : ''}
+          <p class="home-footnote">${user ? '계정은 로그인 유지와 재접속 확인에만 쓰이고, 이메일 등 개인정보는 저장하지 않아요.' : '계정 가입 없이 게스트로 바로 플레이할 수 있어요.'}</p>
         </section>
       </section>`;
     const enter = async invite => {
@@ -480,11 +502,43 @@
     };
     $('#enter-lobby').addEventListener('click', () => enter(''));
     $('#display-name').addEventListener('keydown', event => { if (event.key === 'Enter') enter(''); });
+    app.querySelectorAll('input[name="nick-mode"]').forEach(radio => radio.addEventListener('change', () => {
+      try { localStorage.setItem(NICKMODE_KEY, radio.value); } catch { /* 저장 못 해도 이번 화면에서는 동작 */ }
+      $('#nick-field').hidden = radio.value === 'social';
+      if (radio.value === 'custom') $('#display-name').focus();
+    }));
+    if ($('#auth-logout')) $('#auth-logout').addEventListener('click', logout);
     if ($('#join-invite')) $('#join-invite').addEventListener('click', () => enter(inviteCode));
     settleScreen(sameScreen);
   }
 
+  function nickMode() {
+    try { return localStorage.getItem(NICKMODE_KEY) === 'custom' ? 'custom' : 'social'; } catch { return 'social'; }
+  }
+  async function logout() {
+    try { await fetch('/auth/logout', { method: 'POST' }); } catch { /* 네트워크 오류여도 새로 고침하면 상태가 다시 확인된다 */ }
+    location.reload(); // 소켓 인증은 연결 시점에 정해지므로 새로 연결해야 게스트로 돌아간다.
+  }
+  async function loadAuth() {
+    try {
+      const response = await fetch('/auth/me', { cache: 'no-store' });
+      if (response.ok) {
+        const data = await response.json();
+        state.auth = { providers: Array.isArray(data.providers) ? data.providers : [], user: data.user || null };
+      }
+    } catch { /* 로그인 기능 없이 게스트로 진행 */ }
+    const params = new URLSearchParams(location.search);
+    const error = params.get('auth_error');
+    if (error) {
+      params.delete('auth_error');
+      history.replaceState({}, '', location.pathname + (params.toString() ? `?${params}` : ''));
+      showToast(error === 'denied' ? '로그인을 취소했어요.' : '로그인에 실패했어요. 잠시 후 다시 시도해 주세요.', 'error');
+    }
+  }
+
   function readNickname() {
+    const user = state.auth.user;
+    if (user && user.suggestedName && nickMode() === 'social') return user.suggestedName;
     const input = $('#display-name');
     const name = (input?.value || '').trim();
     if (!/^[\p{L}\p{N}_-]{2,12}$/u.test(name)) {
@@ -1232,5 +1286,5 @@
 
   requestAnimationFrame(frameLoop);
   setConnection(false);
-  renderHome();
+  loadAuth().then(() => { if (!state.nickname && !state.room) renderHome(); });
 })();

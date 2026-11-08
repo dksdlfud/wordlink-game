@@ -8,3 +8,18 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 26.13.0
+      - key: SESSION_SECRET
+        generateValue: true
+      # 소셜 로그인: 값을 넣은 제공자만 로그인 버튼이 나타납니다. (Render 대시보드에서 직접 입력)
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false

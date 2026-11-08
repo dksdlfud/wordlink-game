@@ -1429,3 +1429,28 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
   .fade-in, .chain-word.pop, .stage-letter.swap, .turn-name.swap, .history-item.enter, .history-system.enter,
   .room-card.enter, .hub-user.enter, .chat-line.enter { animation-duration: .01ms !important; }
 }
+
+/* ===== SOCIAL LOGIN (v0.4) ===== */
+.social-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.social-button {
+  display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; padding: 0 8px;
+  color: #4a3a22; background: #fff; border-radius: 12px; box-shadow: 0 3px 0 rgba(110,70,20,.22);
+  font: 800 13px 'Noto Sans KR', sans-serif; text-decoration: none; transition: transform .12s, background .12s;
+}
+.social-button:hover { transform: translateY(-2px); background: #fffaf0; }
+.social-button i { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; color: #fff; font: 900 11px/1 'Noto Sans KR', sans-serif; }
+.social-google i { background: #4285f4; }
+.social-github i { background: #24292f; }
+.social-discord i { background: #5865f2; }
+.auth-chip { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 16px 0 4px; padding: 9px 12px; font-size: 12px; color: #4a3a22; background: #f1fbe6; border: 2px solid #cfe9b0; border-radius: 12px; }
+.link-button { padding: 2px 4px; color: #8a6a3a; background: none; border: 0; font: 700 11px 'Noto Sans KR', sans-serif; text-decoration: underline; cursor: pointer; }
+.nick-mode { display: grid; gap: 8px; margin-top: 12px; }
+.nick-option { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #fff; border: 2px solid #e4d3ae; border-radius: 12px; cursor: pointer; }
+.nick-option:has(input:checked) { border-color: #f0a030; box-shadow: 0 0 0 3px rgba(240,160,48,.2); }
+.nick-option.disabled { opacity: .55; cursor: not-allowed; }
+.nick-option input { accent-color: #f0a030; }
+.nick-option span { display: grid; gap: 1px; min-width: 0; }
+.nick-option b { font-size: 13px; color: #4a3a22; }
+.nick-option small { color: #8a7a5a; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#nick-field[hidden] { display: none; }
+@media (max-width: 420px) { .social-row { grid-template-columns: 1fr; } }

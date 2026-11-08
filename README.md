@@ -71,6 +71,33 @@ npm start
 3. 친구는 같은 Wi-Fi에서 `http://192.168.0.15:3000`처럼 해당 주소로 접속합니다.
 4. Windows 방화벽에서 Node.js의 개인 네트워크 통신을 허용해야 할 수 있습니다.
 
+## 소셜 로그인 (Google · GitHub · Discord)
+
+홈 화면에서 게스트로 바로 입장하거나, 소셜 계정으로 로그인해 입장할 수 있습니다. 로그인하면 **소셜 이름 그대로** 쓸지 **직접 정할지** 고를 수 있고(선택은 브라우저에 기억), 같은 계정은 어느 기기에서든 같은 플레이어로 인식됩니다.
+
+### 설정
+
+각 제공자 개발자 콘솔에서 OAuth 앱을 만들고 아래 Redirect URI를 등록한 뒤, 환경변수를 설정합니다. 환경변수가 없는 제공자는 버튼이 나타나지 않습니다.
+
+| 제공자 | 콘솔 | Redirect URI | 환경변수 |
+| --- | --- | --- | --- |
+| Google | Google Cloud Console → API 및 서비스 → 사용자 인증 정보 → OAuth 클라이언트 ID(웹) | `<배포주소>/auth/google/callback` | `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` |
+| GitHub | Settings → Developer settings → OAuth Apps | `<배포주소>/auth/github/callback` | `GITHUB_CLIENT_ID` `GITHUB_CLIENT_SECRET` |
+| Discord | Developer Portal → Applications → OAuth2 | `<배포주소>/auth/discord/callback` | `DISCORD_CLIENT_ID` `DISCORD_CLIENT_SECRET` |
+
+공통 환경변수:
+
+- `SESSION_SECRET` — 세션 쿠키 서명과 계정 ID 생성에 쓰는 비밀값(**운영 필수**, 길고 무작위인 문자열). 없으면 서버를 재시작할 때마다 모두 로그아웃됩니다. `render.yaml`은 자동 생성하도록 해 두었습니다.
+- `PUBLIC_URL` — 배포 주소(예: `https://wordlink.onrender.com`). Render에서는 `RENDER_EXTERNAL_URL`을 자동으로 사용합니다. 로컬 테스트는 `http://localhost:3000`을 Redirect URI로 등록하면 됩니다.
+
+### 동작과 보안
+
+- 요청 범위는 공개 프로필(Google `openid profile`, Discord `identify`, GitHub 기본)뿐이고, 이메일은 요청하지도 저장하지도 않습니다.
+- `state` 값을 서명된 쿠키로 검증하고, 세션은 HttpOnly · SameSite=Lax(HTTPS면 Secure) 쿠키(30일)입니다.
+- 로그인한 연결의 `playerId`는 서버가 `HMAC(SESSION_SECRET, 제공자:계정ID)`로 만들며 클라이언트가 보낸 값은 무시합니다. 게스트가 `u-`로 시작하는 계정 ID를 흉내 내거나 다른 사람의 방 자리를 복원할 수 없습니다.
+- 계정 정보는 서버 메모리/쿠키에만 있고 DB는 없습니다. 닉네임 변경 기록이나 전적을 저장하려면 DB가 필요합니다.
+- 로그아웃은 홈 화면의 `로그아웃` 버튼입니다.
+
 ## 로비와 자유 접속 방 (v0.3)
 
 닉네임을 입력하고 **로비 입장**을 누르면 로비 화면으로 들어갑니다. 방 코드를 몰라도 열려 있는 방을 눌러 바로 참가할 수 있습니다.
@@ -190,7 +217,7 @@ wordlink-v0.1/
 ## 알려진 제한 사항
 
 - 방과 게임 기록은 서버 메모리에 저장됩니다. 서버가 재시작되면 진행 중인 방은 사라집니다.
-- 계정, 영구 전적, 랭킹, 관전자, 방 안 채팅은 아직 구현하지 않았습니다. (로비 채팅과 방 비밀번호는 v0.3에서 추가됨)
+- 영구 전적, 랭킹, 관전자, 방 안 채팅은 아직 구현하지 않았습니다. (소셜 로그인은 있지만 계정 데이터를 저장하는 DB는 없습니다.) (로비 채팅과 방 비밀번호는 v0.3에서 추가됨)
 - 로비 접속자·채팅 기록도 서버 메모리에 있으므로 서버가 재시작되면 사라집니다. 클라이언트는 재연결 시 자동으로 로비에 다시 들어갑니다.
 - 시작 단어 추천과 막다른 글자 방지 기능은 아직 없습니다.
 - 초기 사전은 확장용 기초 데이터이며 정식 출시용 대규모 사전이 아닙니다.

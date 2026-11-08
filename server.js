@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { Server } = require('socket.io');
+const { createAuth } = require('./auth');
 const {
   validateWord, normalizeWord, allowedFirstSyllables, buildStartIndex, buildRoundSummary, REACTION_EMOJIS,
   TOTAL_TIME_OPTIONS, ROUND_OPTIONS, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS,
@@ -48,7 +49,10 @@ const PASSWORD_BLOCK_MS = 30 * 1000;
 
 const publicFiles = new Set(['/index.html', '/styles.css', '/client.js', '/mascot.css', '/mascot.js']);
 
+const auth = createAuth();
+
 const server = http.createServer((req, res) => {
+  if (auth.handle(req, res)) return;
   const pathname = new URL(req.url, 'http://localhost').pathname;
   const requested = pathname === '/' ? '/index.html' : pathname;
   // Only expose browser assets. Keep server code, package files and the dictionary private.
@@ -88,6 +92,13 @@ function safeName(value) {
 function safePlayerId(value) {
   const id = String(value ?? '');
   return /^[a-zA-Z0-9-]{8,80}$/.test(id) ? id : randomUUID();
+}
+// 소셜 로그인한 소켓은 클라이언트가 보낸 값 대신 계정에서 파생된 playerId를 쓴다. (게스트는 기존처럼 브라우저가 만든 값)
+// 파생 ID는 `u-` 로 시작하므로, 게스트가 로그인한 사람의 ID를 흉내 내 방에 끼어드는 것도 막는다.
+function resolvePlayerId(socket, value) {
+  if (socket.data.auth) return socket.data.auth.playerId;
+  const id = safePlayerId(value);
+  return id.startsWith('u-') ? randomUUID() : id;
 }
 function safeCode(value) { return String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5); }
 function sendAck(callback, payload) { if (typeof callback === 'function') callback(payload); }
@@ -506,13 +517,15 @@ function findRoomPlayer(playerId, code) {
 }
 
 io.on('connection', socket => {
+  const login = auth.sessionFromCookieHeader(socket.handshake.headers.cookie);
+  if (login) socket.data.auth = { provider: login.provider, playerId: login.playerId };
   socket.emit('server:hello', { dictionarySize: dictionary.size, version: VERSION });
 
   // ---------- 로비 ----------
   socket.on('lobby:enter', (payload = {}, callback) => {
     const name = safeName(payload.name);
     if (!name) return sendAck(callback, { ok: false, message: '닉네임은 한글·영문·숫자 2~12자로 입력해 주세요.' });
-    const playerId = safePlayerId(payload.playerId);
+    const playerId = resolvePlayerId(socket, payload.playerId);
     const roomCode = socket.data.roomCode;
     const inRoom = roomCode && rooms.get(roomCode)?.players.get(socket.data.playerId)?.socketId === socket.id;
     if (inRoom) return sendAck(callback, { ok: false, code: 'IN_ROOM', message: '이미 방에 참가 중이에요.' });
@@ -577,7 +590,7 @@ io.on('connection', socket => {
       const password = safePassword(payload.password);
       if (password === null) return sendAck(callback, { ok: false, message: '비밀번호는 영문·숫자 1~8자로 입력해 주세요.' });
       const title = safeTitle(payload.title, `${name}님의 방`);
-      const playerId = safePlayerId(payload.playerId);
+      const playerId = resolvePlayerId(socket, payload.playerId);
       const code = createCode();
       const host = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0 };
       const room = createRoomObject(code, host, { title, password, settings });
@@ -598,7 +611,7 @@ io.on('connection', socket => {
     const room = rooms.get(code);
     if (!room) return sendAck(callback, { ok: false, code: 'NOT_FOUND', message: '방을 찾을 수 없어요. 이미 사라졌거나 코드가 달라요.' });
     const password = String(payload.password ?? '').trim().slice(0, 8);
-    sendAck(callback, performJoin(socket, room, { name, playerId: safePlayerId(payload.playerId), password }));
+    sendAck(callback, performJoin(socket, room, { name, playerId: resolvePlayerId(socket, payload.playerId), password }));
   });
 
   // 빠른 입장: 잠기지 않았고 자리가 있는 대기 중인 방 중 사람이 가장 많은 방으로 들어간다.
@@ -610,12 +623,14 @@ io.on('connection', socket => {
       .sort((a, b) => livePlayers(b).length - livePlayers(a).length || a.number - b.number);
     const room = candidates[0];
     if (!room) return sendAck(callback, { ok: false, code: 'NO_ROOM', message: '지금 바로 들어갈 수 있는 방이 없어요. 새 방을 만들어 보세요!' });
-    sendAck(callback, performJoin(socket, room, { name, playerId: safePlayerId(payload.playerId), password: '' }));
+    sendAck(callback, performJoin(socket, room, { name, playerId: resolvePlayerId(socket, payload.playerId), password: '' }));
   });
 
   socket.on('room:restore', (payload = {}, callback) => {
     const code = safeCode(payload.code);
     const playerId = String(payload.playerId ?? '');
+    // 계정 기반 ID(u-…)는 스냅샷으로 다른 참가자에게도 보이므로, 같은 계정으로 로그인한 소켓만 복원할 수 있다.
+    if (playerId.startsWith('u-') && socket.data.auth?.playerId !== playerId) return sendAck(callback, { ok: false, message: '이전 게임방을 복원할 수 없어요.' });
     const found = findRoomPlayer(playerId, code);
     if (!found) return sendAck(callback, { ok: false, message: '이전 게임방을 복원할 수 없어요.' });
     const { room, player } = found;
