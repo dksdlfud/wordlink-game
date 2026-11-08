@@ -823,3 +823,16 @@ body {
   .score-row .avatar { width: 48px; height: 48px; }
   .site-footer { font-size: 11px; }
 }
+
+/* ── 간결한 플레이 화면 (규칙 패널 제거 · 컴팩트 점수판) ── */
+.players-row { grid-template-columns: 1fr; }
+.players-row .score-list { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.players-row .score-row, .score-row { flex-direction: row; align-items: center; gap: 8px; padding: 8px 10px; text-align: left; }
+.score-row .avatar { width: 34px; height: 34px; border-radius: 10px; font-size: 14px; flex: none; }
+.score-name { flex: 1; min-width: 0; text-align: left; font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.score-points { width: auto; min-width: 44px; padding: 3px 8px; font-size: 15px; letter-spacing: 0; }
+.score-row.current { animation: none; }
+.stage-side-note { display: none; }
+.turn-hint { margin-top: 4px; }
+.text-input { font-size: 18px; }
+.history-points { font-weight: 800; }

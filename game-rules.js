@@ -72,7 +72,6 @@ const TOTAL_TIME_OPTIONS = [20, 40, 60, 80, 100, 150, 500];
 const ROUND_OPTIONS = [3, 5, 7];
 const DEFAULT_TOTAL_SECONDS = 60;
 const DEFAULT_ROUNDS = 3;
-const MISSION_BONUS = 30;
 const MIN_TURN_SECONDS = 5;
 
 // 라운드가 지날수록 턴 제한 시간이 줄어든다. (라운드마다 13%씩, 기본 시간의 35%까지)
@@ -100,6 +99,20 @@ function pickMissionLetter(pool, exclude = '', random = Math.random) {
 
 function hasMissionLetter(word, letter) {
   return Boolean(letter) && String(word ?? '').includes(letter);
+}
+
+// 단어 안에 미션 글자가 몇 번 들어 있는지 센다.
+function countMissionLetters(word, letter) {
+  if (!letter) return 0;
+  return [...String(word ?? '')].filter(ch => ch === letter).length;
+}
+
+// 점수 = 반올림[ (미션 수 + 2) × (7 × 단어 길이 + 5)^0.74 + 0.88 × 체인 × (남은 시간 비율 + 1) ]
+function calcScore({ missions = 0, length = 0, chain = 0, timeRatio = 0 }) {
+  const ratio = Math.max(0, Math.min(1, Number(timeRatio) || 0));
+  return Math.round(
+    (missions + 2) * Math.pow(7 * length + 5, 0.74) + 0.88 * chain * (ratio + 1)
+  );
 }
 
 // 서버가 허용하는 이모지 반응 목록 (클라이언트 버튼과 동일하게 유지)
@@ -145,6 +158,6 @@ function buildRoundSummary({ players, words, winnerId = null, startedAt = null, 
 
 module.exports = {
   normalizeWord, validateWord, allowedFirstSyllables, buildRoundSummary, HANGUL_WORD, REACTION_EMOJIS,
-  TOTAL_TIME_OPTIONS, ROUND_OPTIONS, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS, MISSION_BONUS, MIN_TURN_SECONDS,
-  turnSecondsForRound, buildMissionPool, pickMissionLetter, hasMissionLetter
+  TOTAL_TIME_OPTIONS, ROUND_OPTIONS, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS, MIN_TURN_SECONDS,
+  turnSecondsForRound, buildMissionPool, pickMissionLetter, hasMissionLetter, countMissionLetters, calcScore
 };

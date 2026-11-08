@@ -106,7 +106,7 @@ test('두음법칙 안내 메시지에 두 글자 모두 표시', () => {
 // ── 라운드제 · 미션 글자 ──────────────────────────────────
 const {
   turnSecondsForRound, buildMissionPool, pickMissionLetter, hasMissionLetter,
-  TOTAL_TIME_OPTIONS, buildRoundSummary, MISSION_BONUS
+  TOTAL_TIME_OPTIONS, buildRoundSummary, calcScore, countMissionLetters
 } = require('./game-rules');
 
 test('라운드 총 시간 선택지', () => {
@@ -139,7 +139,6 @@ test('미션 글자 포함 여부', () => {
   assert.equal(hasMissionLetter('사과나무', '나'), true);
   assert.equal(hasMissionLetter('사과', '나'), false);
   assert.equal(hasMissionLetter('사과', ''), false);
-  assert.equal(MISSION_BONUS, 30);
 });
 
 test('경기 요약은 라운드 승수 → 점수 순으로 순위를 매긴다', () => {
@@ -153,4 +152,13 @@ test('경기 요약은 라운드 승수 → 점수 순으로 순위를 매긴다
   });
   assert.deepEqual(summary.ranking.map(row => row.id), ['b', 'a', 'c']);
   assert.equal(summary.ranking[0].roundWins, 2);
+});
+
+test('점수 공식', () => {
+  // (0+2) × (7×2+5)^0.74 + 0.88×1×(1+1) = 2×8.84 + 1.76 → 19
+  assert.equal(calcScore({ missions: 0, length: 2, chain: 1, timeRatio: 1 }), 19);
+  // 미션 글자가 있으면 곱 계수가 커진다.
+  assert.ok(calcScore({ missions: 1, length: 3, chain: 4, timeRatio: .5 }) > calcScore({ missions: 0, length: 3, chain: 4, timeRatio: .5 }));
+  assert.equal(countMissionLetters('가나가', '가'), 2);
+  assert.equal(countMissionLetters('가나가', ''), 0);
 });

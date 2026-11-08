@@ -543,21 +543,21 @@
     }).join('');
     const history = room.words.slice().reverse().map((item, reverseIndex) => {
       if (item.type === 'system') return `<div class="history-system">${escapeHtml(item.text)}</div>`;
-      return `<div class="history-item"><span class="history-index">${String(room.words.filter(entry => entry.type === 'word').indexOf(item) + 1).padStart(2, '0')}</span>${avatar(item.playerName, true)}<span class="history-word">${escapeHtml(item.word)}</span><span class="history-player">${escapeHtml(item.playerName)}</span><span class="history-points">${item.bonus ? `<em class="history-bonus">★ 미션${item.missionFrom ? ` ‘${escapeHtml(item.missionFrom)}’` : ''} +${item.bonus}</em> ` : ''}+${item.points}</span></div>`;
+      return `<div class="history-item"><span class="history-index">${String(room.words.filter(entry => entry.type === 'word').indexOf(item) + 1).padStart(2, '0')}</span>${avatar(item.playerName, true)}<span class="history-word">${escapeHtml(item.word)}</span><span class="history-player">${escapeHtml(item.playerName)}</span><span class="history-points">${item.missions ? `<em class="history-bonus">🎯×${item.missions}</em> ` : ''}+${item.points}</span></div>`;
     }).join('');
     const finished = room.state === 'finished';
-    const winnerContent = finished ? `<div class="finished-banner"><div class="trophy">🏆</div><h2>${room.winnerName ? `${escapeHtml(room.winnerName)} 승리!` : '게임 종료'}</h2><p>${room.winnerName ? '마지막까지 살아남았어요.' : '결과를 확인해 주세요.'}</p></div>` : '';
+    const winnerContent = finished ? `<div class="finished-banner"><div class="trophy">🏆</div><h2>${room.winnerName ? `${escapeHtml(room.winnerName)} 승리!` : '게임 종료'}</h2></div>` : '';
     const breakContent = onBreak && room.roundResult ? (() => {
       const result = room.roundResult;
       const board = result.scores.map(row => `${escapeHtml(row.name)} ${row.roundScore}점`).join(' · ');
-      return `<div class="finished-banner round-banner"><div class="trophy">${result.winnerId ? '🏁' : '🤝'}</div><h2>ROUND ${result.round} ${result.winnerId ? `— ${escapeHtml(result.winnerName)} 승리!` : '— 무승부'}</h2><p>${result.reason === 'time' ? '라운드 시간이 끝났어요.' : '마지막까지 살아남았어요.'} ${board}</p><p class="break-count-line"><span id="break-count">–</span>초 뒤 ROUND ${room.round + 1}/${room.totalRounds} 시작 · 이번엔 턴 제한이 더 짧아져요.</p></div>`;
+      return `<div class="finished-banner round-banner"><div class="trophy">${result.winnerId ? '🏁' : '🤝'}</div><h2>ROUND ${result.round} ${result.winnerId ? `— ${escapeHtml(result.winnerName)} 승리!` : '— 무승부'}</h2><p>${board}</p><p class="break-count-line"><span id="break-count">–</span>초 뒤 ROUND ${room.round + 1}/${room.totalRounds} 시작</p></div>`;
     })() : '';
     const turnName = onBreak ? '다음 라운드를 준비해요' : isPlaying ? (myTurn ? '내 차례예요!' : `${escapeHtml(room.currentPlayerName)}님의 차례`) : '게임이 종료되었어요';
     const allowed = (room.allowedSyllables && room.allowedSyllables.length) ? room.allowedSyllables : (room.lastSyllable ? [room.lastSyllable] : []);
     const allowedLabel = allowed.map(item => `‘${escapeHtml(item)}’`).join(' 또는 ');
     const allowedChip = allowed.map(item => escapeHtml(item)).join(' / ');
     const allowedPlaceholder = allowed.join(' · ');
-    const turnHint = onBreak ? '잠시 숨을 고르고 다음 라운드를 기다려 주세요.' : myTurn ? (room.lastSyllable ? `${allowedLabel}(으)로 시작하는 단어를 입력하세요.` : '첫 단어를 자유롭게 입력해 보세요.') : '차례가 돌아올 때까지 친구들의 단어를 확인해 보세요.';
+    const turnHint = onBreak ? '' : myTurn ? (room.lastSyllable ? `${allowedLabel}(으)로 시작` : '첫 단어를 입력하세요') : '';
     const chain = room.words.filter(item => item.type === 'word').slice(-1)[0];
     const showSummary = finished && Boolean(room.summary) && state.summaryClosedGame !== room.gameId;
     const firstShow = showSummary && state.summaryShownGame !== room.gameId;
@@ -573,7 +573,7 @@
             ${finished && room.summary ? '<button id="open-summary" class="secondary-button">결과 요약 보기</button>' : ''}
             ${finished && isHost ? '<button id="rematch" class="primary-button">다시 플레이 ↗</button>' : finished ? '<button class="secondary-button" disabled>방장이 다시 시작할 수 있어요</button>' : ''}
           </div>
-          <div class="game-top-info"><span class="game-tag">실시간 대결</span><span class="game-round">${room.round}/${room.totalRounds} 라운드${isPlaying ? ' · <span id="round-clock">–</span>' : ''}</span><span class="game-code">방 ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존 <span class="footer-dot">·</span> ${wordCount}개 단어</span></div>
+          <div class="game-top-info"><span class="game-round">${room.round}/${room.totalRounds} 라운드${isPlaying ? ' · <span id="round-clock">–</span>' : ''}</span><span class="game-code">방 ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존</span></div>
         </div>
         ${winnerContent}${breakContent}
         <section class="turn-card stage">
@@ -581,37 +581,34 @@
             <span class="stage-side-label">다음 글자</span>
             <strong class="stage-letter">${allowedChip || '?'}</strong>
           </div>
-          <div class="stage-side stage-mission${state.missionFlashSeq && room.missionChange && room.missionChange.seq === state.missionFlashSeq ? ' mission-new' : ''}" title="미션 글자가 들어간 단어를 내면 +${room.missionBonus}점 보너스!">
+          <div class="stage-side stage-mission${state.missionFlashSeq && room.missionChange && room.missionChange.seq === state.missionFlashSeq ? ' mission-new' : ''}">
             <span class="stage-side-label">미션</span>
             <strong class="stage-letter">${room.mission ? escapeHtml(room.mission) : '?'}</strong>
-            <span class="stage-side-note">포함 시 +${room.missionBonus}</span>
           </div>
           <div class="stage-center">
             <div class="turn-label">${finished ? '경기 종료' : onBreak ? '라운드 휴식' : '현재 차례'}</div>
             <div class="turn-name">${turnName}</div>
-            <div class="turn-hint">${finished ? '친구들과 한 판 더 즐겨 보세요.' : turnHint}</div>
+            ${finished || !turnHint ? '' : `<div class="turn-hint">${turnHint}</div>`}
             <div class="chain-current">${chain ? `<span class="chain-word">${escapeHtml(chain.word)}</span>` : '<span class="chain-word empty">첫 단어를 기다리고 있어요</span>'}</div>
             <div class="timer-track"><div id="timer-fill" class="timer-fill"></div></div>
           </div>
           <div class="stage-side stage-chain">
-            <span class="stage-side-label">연결</span>
+            <span class="stage-side-label">체인</span>
             <strong class="stage-letter">${wordCount}</strong>
             <div class="turn-clock"><span class="clock-icon">◷</span><span id="clock-number" class="clock-number">${isPlaying ? room.turnSeconds : '—'}</span></div>
           </div>
         </section>
         <div class="players-row">
           <section class="panel score-panel"><div class="panel-header"><span class="panel-title">플레이어 순위</span><span class="panel-caption">점수</span></div><div class="score-list">${scoreRows}</div></section>
-          <section class="panel rules-panel"><h3 class="rules-title">게임 규칙</h3><div class="rule-line"><i class="rule-dot"></i><span>마지막 글자로 시작하는 단어를 입력해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>단어는 2~12글자, 사전에 등록된 단어만 가능해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>한 번 사용한 단어는 다시 사용할 수 없어요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>턴 시간 안에 못 내면 그 라운드에서 탈락해요. 글자 수 × 10점!</span></div><div class="rule-line"><i class="rule-dot"></i><span>미션 글자가 들어간 단어는 +${room.missionBonus}점 보너스예요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>라운드가 지날수록 턴 제한 시간이 줄어들어요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>마지막 생존자, 또는 라운드 시간 종료 시 최고 점수가 그 라운드 승리! 가장 많이 이긴 사람이 우승해요.</span></div></section>
         </div>
         <section class="panel history-panel chat-panel">
           <div class="panel-header"><span class="panel-title">단어 기록</span><span class="panel-caption">${wordCount}개</span></div>
           <div id="history-list" class="history-list">${history || '<div class="history-empty">아직 입력된 단어가 없어요.<br>첫 번째 단어의 주인공이 되어 보세요!</div>'}</div>
           <div class="chat-entry">
             <form id="word-form" class="entry-form">
-              <input id="word-input" class="text-input" type="text" maxlength="12" autocomplete="off" placeholder="${myTurn ? (room.lastSyllable ? `${allowedPlaceholder}(으)로 시작하는 단어` : '첫 단어를 입력하세요') : '내 차례를 기다려 주세요'}" ${myTurn ? '' : 'disabled'}>
-              <button class="primary-button" type="submit" ${myTurn ? '' : 'disabled'}>단어 제출</button>
+              <input id="word-input" class="text-input" type="text" maxlength="12" autocomplete="off" placeholder="${myTurn ? (room.lastSyllable ? `${allowedPlaceholder}…` : '첫 단어') : '기다리는 중…'}" ${myTurn ? '' : 'disabled'}>
+              <button class="primary-button" type="submit" ${myTurn ? '' : 'disabled'}>제출</button>
             </form>
-            <div class="entry-help"><span>${myTurn ? '<strong>ENTER</strong> 키로 빠르게 제출할 수 있어요.' : '순서가 되면 입력창이 활성화돼요.'}</span><span>중복 단어 사용 불가</span></div>
           </div>
         </section>
         ${reactionBar}
@@ -651,8 +648,8 @@
       if (button) button.disabled = false;
     } else {
       sound.play('submit');
-      if (result.bonus) sound.play('bonus', 160);
-      showToast(`‘${result.word}’ 제출 완료 · +${result.points}점${result.bonus ? ` (미션 보너스 +${result.bonus}!)` : ''}${result.newMission ? ` · 새 미션 ‘${result.newMission}’` : ''}`, 'success');
+      if (result.missions) sound.play('bonus', 160);
+      showToast(`+${result.points}점${result.chain > 1 ? ` · ${result.chain}체인` : ''}${result.newMission ? ` · 새 미션 ‘${result.newMission}’` : ''}`, 'success');
     }
   }
   async function rematch() {
