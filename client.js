@@ -11,6 +11,8 @@
   const SOUND_KEY = 'wordlink.sound.v1';
   const REACTIONS = ['👍', '😂', '😮', '🔥', '👏', '😭'];
   const REACTION_COOLDOWN_MS = 350;
+  const TOTAL_TIME_OPTIONS = [20, 40, 60, 80, 100, 150, 500];
+  const ROUND_OPTIONS = [3, 5, 7];
 
   const state = {
     socket: null,
@@ -112,6 +114,7 @@
       start: [{ freq: 440, dur: .1 }, { freq: 554, at: .1, dur: .1 }, { freq: 659, at: .2, dur: .2 }],
       win: [523, 659, 784, 1047].map((freq, i) => ({ freq, at: i * .12, dur: i === 3 ? .5 : .14 })),
       end: [{ freq: 392, dur: .18, type: 'triangle' }, { freq: 330, at: .18, dur: .18, type: 'triangle' }, { freq: 262, at: .36, dur: .4, type: 'triangle' }],
+      bonus: [{ freq: 784, dur: .08 }, { freq: 1047, at: .08, dur: .08 }, { freq: 1319, at: .16, dur: .22 }],
       pop: [{ freq: 700, dur: .07, gain: .035, to: 1000 }],
       toggle: [{ freq: 880, dur: .08, gain: .05 }]
     };
@@ -181,6 +184,7 @@
     const me = state.session.playerId;
     if (prev.state !== 'playing' && next.state === 'playing') { sound.play('start'); return; }
     if (prev.state === 'playing' && next.state === 'finished') { sound.play(next.winnerId && next.winnerId === me ? 'win' : 'end'); return; }
+    if (prev.state === 'playing' && next.state === 'intermission') { sound.play(next.roundResult && next.roundResult.winnerId === me ? 'win' : 'end'); return; }
     if (next.state !== 'playing') return;
     const newWord = next.totalWords > prev.totalWords;
     const lastWord = newWord ? next.words.filter(item => item.type === 'word').slice(-1)[0] : null;
@@ -243,8 +247,8 @@
       ['플레이 시간', summary.durationMs == null ? '—' : formatDuration(summary.durationMs), '']
     ].map(([label, value, note]) => `<div class="summary-stat"><small>${label}</small><strong>${value}</strong>${note ? `<span>${note}</span>` : ''}</div>`).join('');
     const rows = summary.ranking.map(row => {
-      const status = row.isWinner ? '최후의 생존자' : row.eliminated ? '탈락' : '생존';
-      const detail = `${status} · 단어 ${row.wordCount}개${row.longestWord ? ` · 최장 ${escapeHtml(row.longestWord)}` : ''}`;
+      const status = row.isWinner ? '최종 우승' : row.eliminated ? '퇴장' : '참가';
+      const detail = `${status} · ${row.roundWins}승 · 단어 ${row.wordCount}개${row.longestWord ? ` · 최장 ${escapeHtml(row.longestWord)}` : ''}`;
       return `<li class="summary-row ${row.isWinner ? 'winner' : ''}">
         <span class="summary-rank">${row.rank}</span>
         ${avatar(row.name, true)}
@@ -258,7 +262,7 @@
           <button id="summary-close" class="summary-close" type="button" aria-label="결과 요약 닫기">✕</button>
           <div class="summary-kicker">ROUND RESULT</div>
           <h2 id="summary-title" class="summary-title">${winner ? `${escapeHtml(winner.name)} 승리!` : '게임 종료'}</h2>
-          <p class="summary-sub">${winner ? '마지막까지 살아남은 플레이어예요.' : '이번 판의 결과를 확인해 보세요.'}</p>
+          <p class="summary-sub">${winner ? '가장 많은 라운드를 이긴 플레이어예요.' : '이번 판의 결과를 확인해 보세요.'}</p>
           <div class="summary-stats">${tiles}</div>
           <ol class="summary-ranking">${rows}</ol>
           <div class="summary-actions">
@@ -422,8 +426,16 @@
     const emptySlots = Math.max(0, Math.min(room.settings.maxPlayers - room.players.length, 3));
     const settingsContent = isHost ? `
       <div class="setting-block">
-        <label class="field-label" for="setting-time">턴 제한 시간</label>
+        <label class="field-label" for="setting-time">턴 제한 시간 <small class="field-hint">(라운드가 갈수록 줄어요)</small></label>
         <select id="setting-time" class="select-input"><option value="10" ${room.settings.turnSeconds === 10 ? 'selected' : ''}>10초</option><option value="15" ${room.settings.turnSeconds === 15 ? 'selected' : ''}>15초</option><option value="20" ${room.settings.turnSeconds === 20 ? 'selected' : ''}>20초</option><option value="30" ${room.settings.turnSeconds === 30 ? 'selected' : ''}>30초</option></select>
+      </div>
+      <div class="setting-block">
+        <label class="field-label" for="setting-total">라운드 총 시간</label>
+        <select id="setting-total" class="select-input">${TOTAL_TIME_OPTIONS.map(sec => `<option value="${sec}" ${room.settings.totalSeconds === sec ? 'selected' : ''}>${sec}초</option>`).join('')}</select>
+      </div>
+      <div class="setting-block">
+        <label class="field-label" for="setting-rounds">라운드 수</label>
+        <select id="setting-rounds" class="select-input">${ROUND_OPTIONS.map(num => `<option value="${num}" ${room.settings.rounds === num ? 'selected' : ''}>${num}라운드</option>`).join('')}</select>
       </div>
       <div class="setting-block">
         <label class="field-label" for="setting-players">최대 인원</label>
@@ -432,6 +444,8 @@
       </div>
       <button id="apply-settings" class="ghost-button button-full">설정 적용</button>` : `
       <div class="setting-block"><label class="field-label">턴 제한 시간</label><div class="read-only-setting">${room.settings.turnSeconds}초</div></div>
+      <div class="setting-block"><label class="field-label">라운드 총 시간</label><div class="read-only-setting">${room.settings.totalSeconds}초</div></div>
+      <div class="setting-block"><label class="field-label">라운드 수</label><div class="read-only-setting">${room.settings.rounds}라운드</div></div>
       <div class="setting-block"><label class="field-label">최대 인원</label><div class="read-only-setting">${room.settings.maxPlayers}명</div></div>
       <p class="setting-note">대기실 설정은 방장만 변경할 수 있어요.</p>`;
 
@@ -471,7 +485,8 @@
   async function applySettings() {
     const result = await request('room:settings', {
       code: state.room.code, playerId: state.session.playerId,
-      turnSeconds: Number($('#setting-time').value), maxPlayers: Number($('#setting-players').value)
+      turnSeconds: Number($('#setting-time').value), maxPlayers: Number($('#setting-players').value),
+      totalSeconds: Number($('#setting-total').value), rounds: Number($('#setting-rounds').value)
     });
     showToast(result.ok ? '게임 설정을 적용했어요.' : result.message, result.ok ? 'success' : 'error');
   }
@@ -501,6 +516,7 @@
     const mine = room.players.find(player => player.id === state.session.playerId);
     const isHost = room.hostId === state.session.playerId;
     const isPlaying = room.state === 'playing';
+    const onBreak = room.state === 'intermission';
     const myTurn = isPlaying && room.currentPlayerId === state.session.playerId && !mine?.eliminated;
     const alive = room.players.filter(player => !player.eliminated).length;
     const wordCount = room.words.filter(item => item.type === 'word').length;
@@ -510,22 +526,27 @@
       const status = player.eliminated ? '탈락' : !player.online ? '연결 끊김' : current ? '현재 차례' : '플레이 중';
       return `<div class="score-row ${current ? 'current' : ''} ${player.eliminated ? 'eliminated' : ''}">
         ${avatar(player.name, true)}
-        <div class="score-name">${escapeHtml(player.name)}<span class="score-state">${status}</span></div>
+        <div class="score-name">${escapeHtml(player.name)}<span class="score-state">${status}${room.totalRounds > 1 ? ` · ${player.roundWins}승` : ''}</span></div>
         <span class="score-points">${player.score}</span>
       </div>`;
     }).join('');
     const history = room.words.slice().reverse().map((item, reverseIndex) => {
       if (item.type === 'system') return `<div class="history-system">${escapeHtml(item.text)}</div>`;
-      return `<div class="history-item"><span class="history-index">${String(room.words.filter(entry => entry.type === 'word').indexOf(item) + 1).padStart(2, '0')}</span>${avatar(item.playerName, true)}<span class="history-word">${escapeHtml(item.word)}</span><span class="history-player">${escapeHtml(item.playerName)}</span><span class="history-points">+${item.points}</span></div>`;
+      return `<div class="history-item"><span class="history-index">${String(room.words.filter(entry => entry.type === 'word').indexOf(item) + 1).padStart(2, '0')}</span>${avatar(item.playerName, true)}<span class="history-word">${escapeHtml(item.word)}</span><span class="history-player">${escapeHtml(item.playerName)}</span><span class="history-points">${item.bonus ? `<em class="history-bonus">★ 미션 +${item.bonus}</em> ` : ''}+${item.points}</span></div>`;
     }).join('');
     const finished = room.state === 'finished';
     const winnerContent = finished ? `<div class="finished-banner"><div class="trophy">🏆</div><h2>${room.winnerName ? `${escapeHtml(room.winnerName)} 승리!` : '게임 종료'}</h2><p>${room.winnerName ? '마지막까지 살아남았어요.' : '결과를 확인해 주세요.'}</p></div>` : '';
-    const turnName = isPlaying ? (myTurn ? '내 차례예요!' : `${escapeHtml(room.currentPlayerName)}님의 차례`) : '게임이 종료되었어요';
+    const breakContent = onBreak && room.roundResult ? (() => {
+      const result = room.roundResult;
+      const board = result.scores.map(row => `${escapeHtml(row.name)} ${row.roundScore}점`).join(' · ');
+      return `<div class="finished-banner round-banner"><div class="trophy">${result.winnerId ? '🏁' : '🤝'}</div><h2>ROUND ${result.round} ${result.winnerId ? `— ${escapeHtml(result.winnerName)} 승리!` : '— 무승부'}</h2><p>${result.reason === 'time' ? '라운드 시간이 끝났어요.' : '마지막까지 살아남았어요.'} ${board}</p><p class="break-count-line"><span id="break-count">–</span>초 뒤 ROUND ${room.round + 1}/${room.totalRounds} 시작 · 이번엔 턴 제한이 더 짧아져요.</p></div>`;
+    })() : '';
+    const turnName = onBreak ? '다음 라운드를 준비해요' : isPlaying ? (myTurn ? '내 차례예요!' : `${escapeHtml(room.currentPlayerName)}님의 차례`) : '게임이 종료되었어요';
     const allowed = (room.allowedSyllables && room.allowedSyllables.length) ? room.allowedSyllables : (room.lastSyllable ? [room.lastSyllable] : []);
     const allowedLabel = allowed.map(item => `‘${escapeHtml(item)}’`).join(' 또는 ');
     const allowedChip = allowed.map(item => escapeHtml(item)).join(' / ');
     const allowedPlaceholder = allowed.join(' · ');
-    const turnHint = myTurn ? (room.lastSyllable ? `${allowedLabel}(으)로 시작하는 단어를 입력하세요.` : '첫 단어를 자유롭게 입력해 보세요.') : '차례가 돌아올 때까지 친구들의 단어를 확인해 보세요.';
+    const turnHint = onBreak ? '잠시 숨을 고르고 다음 라운드를 기다려 주세요.' : myTurn ? (room.lastSyllable ? `${allowedLabel}(으)로 시작하는 단어를 입력하세요.` : '첫 단어를 자유롭게 입력해 보세요.') : '차례가 돌아올 때까지 친구들의 단어를 확인해 보세요.';
     const chain = room.words.filter(item => item.type === 'word').slice(-1)[0];
     const showSummary = finished && Boolean(room.summary) && state.summaryClosedGame !== room.gameId;
     const firstShow = showSummary && state.summaryShownGame !== room.gameId;
@@ -541,16 +562,21 @@
             ${finished && room.summary ? '<button id="open-summary" class="secondary-button">결과 요약 보기</button>' : ''}
             ${finished && isHost ? '<button id="rematch" class="primary-button">다시 플레이 ↗</button>' : finished ? '<button class="secondary-button" disabled>방장이 다시 시작할 수 있어요</button>' : ''}
           </div>
-          <div class="game-top-info"><span class="game-tag">LIVE WORD BATTLE</span><span class="game-code">ROOM ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존 <span class="footer-dot">·</span> ${wordCount}개 단어</span></div>
+          <div class="game-top-info"><span class="game-tag">LIVE WORD BATTLE</span><span class="game-round">ROUND ${room.round}/${room.totalRounds}${isPlaying ? ' · <span id="round-clock">–</span>' : ''}</span><span class="game-code">ROOM ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존 <span class="footer-dot">·</span> ${wordCount}개 단어</span></div>
         </div>
-        ${winnerContent}
+        ${winnerContent}${breakContent}
         <section class="turn-card stage">
           <div class="stage-side stage-next">
             <span class="stage-side-label">NEXT</span>
             <strong class="stage-letter">${allowedChip || '?'}</strong>
           </div>
+          <div class="stage-side stage-mission" title="미션 글자가 들어간 단어를 내면 +${room.missionBonus}점 보너스!">
+            <span class="stage-side-label">MISSION</span>
+            <strong class="stage-letter">${room.mission ? escapeHtml(room.mission) : '?'}</strong>
+            <span class="stage-side-note">포함 시 +${room.missionBonus}</span>
+          </div>
           <div class="stage-center">
-            <div class="turn-label">${finished ? 'MATCH COMPLETE' : 'CURRENT TURN'}</div>
+            <div class="turn-label">${finished ? 'MATCH COMPLETE' : onBreak ? 'ROUND BREAK' : 'CURRENT TURN'}</div>
             <div class="turn-name">${turnName}</div>
             <div class="turn-hint">${finished ? '친구들과 한 판 더 즐겨 보세요.' : turnHint}</div>
             <div class="chain-current">${chain ? `<span class="chain-word">${escapeHtml(chain.word)}</span>` : '<span class="chain-word empty">첫 단어를 기다리고 있어요</span>'}</div>
@@ -559,12 +585,12 @@
           <div class="stage-side stage-chain">
             <span class="stage-side-label">CHAIN</span>
             <strong class="stage-letter">${wordCount}</strong>
-            <div class="turn-clock"><span class="clock-icon">◷</span><span id="clock-number" class="clock-number">${isPlaying ? room.settings.turnSeconds : '—'}</span></div>
+            <div class="turn-clock"><span class="clock-icon">◷</span><span id="clock-number" class="clock-number">${isPlaying ? room.turnSeconds : '—'}</span></div>
           </div>
         </section>
         <div class="players-row">
           <section class="panel score-panel"><div class="panel-header"><span class="panel-title">플레이어 순위</span><span class="panel-caption">SCORE</span></div><div class="score-list">${scoreRows}</div></section>
-          <section class="panel rules-panel"><h3 class="rules-title">게임 규칙</h3><div class="rule-line"><i class="rule-dot"></i><span>마지막 글자로 시작하는 단어를 입력해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>단어는 2~12글자, 사전에 등록된 단어만 가능해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>한 번 사용한 단어는 다시 사용할 수 없어요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>시간이 끝나면 탈락하고, 글자 수 × 10점을 얻어요.</span></div></section>
+          <section class="panel rules-panel"><h3 class="rules-title">게임 규칙</h3><div class="rule-line"><i class="rule-dot"></i><span>마지막 글자로 시작하는 단어를 입력해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>단어는 2~12글자, 사전에 등록된 단어만 가능해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>한 번 사용한 단어는 다시 사용할 수 없어요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>턴 시간 안에 못 내면 그 라운드에서 탈락해요. 글자 수 × 10점!</span></div><div class="rule-line"><i class="rule-dot"></i><span>미션 글자가 들어간 단어는 +${room.missionBonus}점 보너스예요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>라운드가 지날수록 턴 제한 시간이 줄어들어요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>마지막 생존자, 또는 라운드 시간 종료 시 최고 점수가 그 라운드 승리! 가장 많이 이긴 사람이 우승해요.</span></div></section>
         </div>
         <section class="panel history-panel chat-panel">
           <div class="panel-header"><span class="panel-title">단어 기록</span><span class="panel-caption">${wordCount} WORDS</span></div>
@@ -614,7 +640,8 @@
       if (button) button.disabled = false;
     } else {
       sound.play('submit');
-      showToast(`‘${result.word}’ 제출 완료 · +${result.points}점`, 'success');
+      if (result.bonus) sound.play('bonus', 160);
+      showToast(`‘${result.word}’ 제출 완료 · +${result.points}점${result.bonus ? ` (미션 보너스 +${result.bonus}!)` : ''}`, 'success');
     }
   }
   async function rematch() {
@@ -622,13 +649,29 @@
     if (!result.ok) showToast(result.message, 'error');
     else showToast('새 게임을 시작했어요!', 'success');
   }
+  function formatClock(ms) {
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  }
   function updateClock() {
     const room = state.room;
-    if (!room || room.state !== 'playing') return;
+    if (!room) return;
+    if (room.state === 'intermission') {
+      const count = $('#break-count');
+      if (count) count.textContent = String(Math.max(0, Math.ceil(((room.nextRoundAt || Date.now()) - Date.now()) / 1000)));
+      return;
+    }
+    if (room.state !== 'playing') return;
+    const roundClock = $('#round-clock');
+    if (roundClock) {
+      const left = Math.max(0, (room.roundEndsAt || Date.now()) - Date.now());
+      roundClock.textContent = formatClock(left);
+      roundClock.classList.toggle('low', left <= 10000);
+    }
     const number = $('#clock-number');
     const fill = $('#timer-fill');
     if (!number || !fill) return;
-    const duration = room.settings.turnSeconds * 1000;
+    const duration = room.turnDurationMs || room.turnSeconds * 1000;
     const remaining = Math.max(0, (room.turnEndsAt || Date.now()) - Date.now());
     const seconds = Math.ceil(remaining / 1000);
     number.textContent = String(seconds);

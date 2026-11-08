@@ -36,7 +36,7 @@ test('rejects repeated words', () => {
 });
 
 test('rejects words outside the starter dictionary', () => {
-  const result = validateWord('초전도체', dictionary, new Set(), '');
+  const result = validateWord('뷁뷁뷁뷁', dictionary, new Set(), '');
   assert.equal(result.code, 'UNKNOWN');
 });
 
@@ -101,4 +101,56 @@ test('두음법칙 안내 메시지에 두 글자 모두 표시', () => {
   const result = validateWord('사과', dictionary, new Set(), '리');
   assert.equal(result.code, 'CHAIN');
   assert.ok(result.message.includes('‘리’') && result.message.includes('‘이’'));
+});
+
+// ── 라운드제 · 미션 글자 ──────────────────────────────────
+const {
+  turnSecondsForRound, buildMissionPool, pickMissionLetter, hasMissionLetter,
+  TOTAL_TIME_OPTIONS, buildRoundSummary, MISSION_BONUS
+} = require('./game-rules');
+
+test('라운드 총 시간 선택지', () => {
+  assert.deepEqual(TOTAL_TIME_OPTIONS, [20, 40, 60, 80, 100, 150, 500]);
+});
+
+test('라운드가 갈수록 턴 제한 시간이 줄어들고 5초 아래로는 내려가지 않는다', () => {
+  const series = [0, 1, 2, 3, 4, 5, 6].map(round => turnSecondsForRound(15, round));
+  assert.deepEqual(series, [15, 13, 11, 9, 7, 5, 5]);
+  for (let i = 1; i < series.length; i += 1) assert.ok(series[i] <= series[i - 1]);
+  assert.ok([0, 1, 2, 3, 4, 5, 6].every(round => turnSecondsForRound(10, round) >= 5));
+  assert.equal(turnSecondsForRound(30, 0), 30);
+});
+
+test('미션 글자 후보는 사전에 실제로 쓰이는 한글이다', () => {
+  const pool = buildMissionPool(dictionary);
+  assert.ok(pool.length >= 50);
+  assert.ok(pool.every(ch => /^[가-힣]$/u.test(ch)));
+  assert.ok(pool.every(ch => [...dictionary].some(word => word.includes(ch))));
+});
+
+test('미션 글자는 직전 글자를 피해서 뽑는다', () => {
+  const pool = ['가', '나', '다'];
+  for (let i = 0; i < 30; i += 1) assert.notEqual(pickMissionLetter(pool, '가'), '가');
+  assert.equal(pickMissionLetter(['가'], '가'), '가');
+  assert.equal(pickMissionLetter([], ''), '');
+});
+
+test('미션 글자 포함 여부', () => {
+  assert.equal(hasMissionLetter('사과나무', '나'), true);
+  assert.equal(hasMissionLetter('사과', '나'), false);
+  assert.equal(hasMissionLetter('사과', ''), false);
+  assert.equal(MISSION_BONUS, 30);
+});
+
+test('경기 요약은 라운드 승수 → 점수 순으로 순위를 매긴다', () => {
+  const summary = buildRoundSummary({
+    players: [
+      { id: 'a', name: 'A', score: 500, roundWins: 1, eliminated: false },
+      { id: 'b', name: 'B', score: 300, roundWins: 2, eliminated: false },
+      { id: 'c', name: 'C', score: 900, roundWins: 0, eliminated: true }
+    ],
+    words: [], winnerId: 'b'
+  });
+  assert.deepEqual(summary.ranking.map(row => row.id), ['b', 'a', 'c']);
+  assert.equal(summary.ranking[0].roundWins, 2);
 });

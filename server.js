@@ -5,7 +5,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { Server } = require('socket.io');
-const { validateWord, normalizeWord, allowedFirstSyllables } = require('./game-rules');
+const {
+  validateWord, normalizeWord, allowedFirstSyllables, buildRoundSummary, REACTION_EMOJIS,
+  TOTAL_TIME_OPTIONS, ROUND_OPTIONS, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS, MISSION_BONUS,
+  turnSecondsForRound, buildMissionPool, pickMissionLetter, hasMissionLetter
+} = require('./game-rules');
 
 // The GitHub upload currently has a flattened layout: all app files live at the repository root.
 const ROOT = __dirname;
@@ -17,6 +21,10 @@ const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 const rawWords = JSON.parse(fs.readFileSync(path.join(ROOT, 'words.json'), 'utf8'));
 const dictionary = new Set(rawWords.map(normalizeWord));
+const missionPool = buildMissionPool(dictionary);
+
+const ROUND_BREAK_MS = 6000;      // 라운드 사이 쉬는 시간
+const REACTION_COOLDOWN_MS = 350; // 이모지 연타 제한
 
 const publicFiles = new Set(['/index.html', '/styles.css', '/client.js']);
 
@@ -81,19 +89,40 @@ function clearTurnTimer(room) {
   timers.delete(room.code);
   room.turnToken += 1;
 }
+function clearRoundTimers(room) {
+  if (room.roundTimer) clearTimeout(room.roundTimer);
+  if (room.breakTimer) clearTimeout(room.breakTimer);
+  room.roundTimer = null;
+  room.breakTimer = null;
+  room.roundToken += 1;
+}
 function roomSnapshot(room) {
   const current = currentPlayer(room);
   return {
     code: room.code,
     hostId: room.hostId,
     state: room.state,
+    gameId: room.gameId,
     settings: { ...room.settings },
+    round: room.round + 1,
+    totalRounds: room.settings.rounds,
+    mission: room.mission,
+    missionBonus: MISSION_BONUS,
+    roundEndsAt: room.roundEndsAt,
+    nextRoundAt: room.nextRoundAt,
+    roundResult: room.roundResult,
+    turnSeconds: room.turnSeconds,
+    turnDurationMs: room.turnDurationMs,
+    totalWords: room.matchWordCount,
+    summary: room.state === 'finished' ? room.summary : null,
     players: orderedPlayers(room).map(player => ({
       id: player.id,
       name: player.name,
       online: player.online,
       ready: player.ready,
       score: player.score,
+      roundScore: player.roundScore,
+      roundWins: player.roundWins,
       eliminated: player.eliminated,
       isHost: player.id === room.hostId
     })),
@@ -110,14 +139,76 @@ function roomSnapshot(room) {
 }
 function broadcast(room) { io.to(roomChannel(room.code)).emit('room:update', roomSnapshot(room)); }
 function notice(socket, message, type = 'info') { socket.emit('notice', { message, type }); }
-function finishGame(room) {
+function livePlayers(room) { return orderedPlayers(room).filter(player => !player.left); }
+
+// 한 라운드를 끝낸다. 마지막 라운드이거나 남은 사람이 부족하면 경기 전체를 끝낸다.
+function endRound(room, reason) {
+  if (room.state !== 'playing') return;
   clearTurnTimer(room);
+  clearRoundTimers(room);
+  room.turnEndsAt = null;
+  room.turnDurationMs = null;
+  room.roundEndsAt = null;
+  room.currentPlayerId = null;
+  const candidates = activePlayers(room).filter(player => !player.left);
+  let winner = null;
+  if (reason === 'last') {
+    winner = candidates.length === 1 ? candidates[0] : null;
+  } else {
+    const top = Math.max(0, ...candidates.map(player => player.roundScore));
+    const leaders = top > 0 ? candidates.filter(player => player.roundScore === top) : [];
+    winner = leaders.length === 1 ? leaders[0] : null;
+  }
+  if (winner) winner.roundWins += 1;
+  room.roundResult = {
+    round: room.round + 1,
+    reason,
+    winnerId: winner ? winner.id : null,
+    winnerName: winner ? winner.name : '',
+    scores: livePlayers(room)
+      .map(player => ({ id: player.id, name: player.name, roundScore: player.roundScore, eliminated: player.eliminated }))
+      .sort((a, b) => b.roundScore - a.roundScore)
+  };
+  const label = winner ? `${winner.name}님이 라운드 ${room.round + 1}을(를) 가져갔어요.` : `라운드 ${room.round + 1}은(는) 무승부예요.`;
+  room.words.push({ type: 'system', text: reason === 'time' ? `⏱ 라운드 시간 종료 — ${label}` : `🏁 ${label}`, at: Date.now() });
+  const isLast = room.round + 1 >= room.settings.rounds;
+  if (isLast || livePlayers(room).length < 2) return finishMatch(room);
+  room.state = 'intermission';
+  room.nextRoundAt = Date.now() + ROUND_BREAK_MS;
+  const token = room.roundToken;
+  room.breakTimer = setTimeout(() => {
+    if (rooms.get(room.code) !== room || room.state !== 'intermission' || room.roundToken !== token) return;
+    startRound(room, room.round + 1);
+    broadcast(room);
+  }, ROUND_BREAK_MS);
+  room.breakTimer.unref?.();
+  broadcast(room);
+}
+
+// 전체 경기를 끝낸다. 라운드 승수 → 총점 순으로 우승자를 정한다.
+function finishMatch(room) {
+  clearTurnTimer(room);
+  clearRoundTimers(room);
   room.state = 'finished';
   room.turnEndsAt = null;
-  const remaining = activePlayers(room);
-  room.winnerId = remaining.length === 1 ? remaining[0].id : null;
+  room.turnDurationMs = null;
+  room.roundEndsAt = null;
+  room.nextRoundAt = null;
   room.currentPlayerId = null;
-  room.words.push({ type: 'system', text: room.winnerId ? `${remaining[0].name}님이 최종 승리했습니다.` : '게임이 종료되었습니다.', at: Date.now() });
+  const contenders = livePlayers(room);
+  const ranked = [...contenders].sort((a, b) => b.roundWins - a.roundWins || b.score - a.score);
+  const [first, second] = ranked;
+  const decided = first && (!second || first.roundWins !== second.roundWins || first.score !== second.score);
+  const champion = decided ? first : null;
+  room.winnerId = champion ? champion.id : null;
+  room.words.push({ type: 'system', text: champion ? `🏆 ${champion.name}님이 최종 우승했습니다.` : '게임이 종료되었습니다.', at: Date.now() });
+  room.summary = buildRoundSummary({
+    players: orderedPlayers(room).map(player => ({ id: player.id, name: player.name, score: player.score, roundWins: player.roundWins, eliminated: player.left })),
+    words: room.matchWords,
+    winnerId: room.winnerId,
+    startedAt: room.startedAt,
+    endedAt: Date.now()
+  });
   broadcast(room);
   if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
   room.cleanupTimer = setTimeout(() => {
@@ -137,31 +228,75 @@ function findNextActiveIndex(room, fromIndex) {
 function startTurn(room, index) {
   const playerId = room.playerOrder[index];
   const player = room.players.get(playerId);
-  if (!player || player.eliminated) return finishGame(room);
+  if (!player || player.eliminated) return endRound(room, 'last');
   clearTurnTimer(room);
   room.turnIndex = index;
   room.currentPlayerId = playerId;
-  room.turnEndsAt = Date.now() + room.settings.turnSeconds * 1000;
+  const now = Date.now();
+  const turnMs = room.turnSeconds * 1000;
+  const roundLeft = room.roundEndsAt - now;
+  room.turnStartedAt = now;
+  // 라운드 종료 시각이 더 가까우면 턴 타이머는 두지 않고 라운드 타이머에 맡긴다.
+  const clamped = roundLeft <= turnMs;
+  room.turnEndsAt = clamped ? room.roundEndsAt : now + turnMs;
+  room.turnDurationMs = room.turnEndsAt - now;
+  if (clamped) return;
   const token = room.turnToken;
   const timer = setTimeout(() => {
     if (rooms.get(room.code) !== room || room.state !== 'playing' || room.turnToken !== token || room.currentPlayerId !== playerId) return;
     const timedOut = room.players.get(playerId);
     if (timedOut && !timedOut.eliminated) {
       timedOut.eliminated = true;
-      room.words.push({ type: 'system', text: `${timedOut.name}님이 시간 초과로 탈락했습니다.`, at: Date.now() });
-      if (room.hostId === timedOut.id) {
-        const nextHost = activePlayers(room).find(candidate => candidate.online) || activePlayers(room)[0];
-        room.hostId = nextHost ? nextHost.id : null;
-      }
+      room.words.push({ type: 'system', text: `${timedOut.name}님이 시간 초과로 이번 라운드에서 탈락했습니다.`, at: Date.now() });
     }
     const next = findNextActiveIndex(room, room.turnIndex);
-    if (next < 0 || activePlayers(room).length <= 1) return finishGame(room);
+    if (next < 0 || activePlayers(room).length <= 1) return endRound(room, 'last');
     room.turnCount += 1;
     startTurn(room, next);
     broadcast(room);
-  }, room.settings.turnSeconds * 1000);
+  }, turnMs);
   timers.set(room.code, timer);
   timer.unref?.();
+}
+
+// 라운드를 시작한다. 모든 플레이어(나간 사람 제외)가 되살아나고 단어 사슬·라운드 점수가 초기화된다.
+function startRound(room, roundIndex) {
+  clearTurnTimer(room);
+  clearRoundTimers(room);
+  room.state = 'playing';
+  room.round = roundIndex;
+  room.words = [];
+  room.usedWords.clear();
+  room.lastSyllable = '';
+  room.turnCount = 1;
+  room.roundResult = null;
+  room.nextRoundAt = null;
+  room.mission = pickMissionLetter(missionPool, room.mission);
+  room.turnSeconds = turnSecondsForRound(room.settings.turnSeconds, roundIndex);
+  orderedPlayers(room).forEach(player => { player.roundScore = 0; player.eliminated = Boolean(player.left); });
+  room.roundEndsAt = Date.now() + room.settings.totalSeconds * 1000;
+  const token = room.roundToken;
+  room.roundTimer = setTimeout(() => {
+    if (rooms.get(room.code) !== room || room.state !== 'playing' || room.roundToken !== token) return;
+    endRound(room, 'time');
+  }, room.settings.totalSeconds * 1000);
+  room.roundTimer.unref?.();
+  const first = findNextActiveIndex(room, roundIndex - 1); // 라운드마다 시작 순서를 한 칸씩 돌린다.
+  startTurn(room, first);
+}
+
+// 새 경기(1라운드부터)를 시작한다.
+function startMatch(room) {
+  if (room.cleanupTimer) { clearTimeout(room.cleanupTimer); room.cleanupTimer = null; }
+  room.gameId += 1;
+  room.matchWords = [];
+  room.matchWordCount = 0;
+  room.summary = null;
+  room.winnerId = null;
+  room.mission = '';
+  room.startedAt = Date.now();
+  orderedPlayers(room).forEach(player => { player.score = 0; player.roundScore = 0; player.roundWins = 0; player.left = false; player.eliminated = false; });
+  startRound(room, 0);
 }
 function createRoomObject(code, host) {
   const now = Date.now();
@@ -169,7 +304,7 @@ function createRoomObject(code, host) {
     code,
     hostId: host.id,
     state: 'lobby',
-    settings: { turnSeconds: 15, maxPlayers: 8 },
+    settings: { turnSeconds: 15, maxPlayers: 8, totalSeconds: DEFAULT_TOTAL_SECONDS, rounds: DEFAULT_ROUNDS },
     players: new Map([[host.id, host]]),
     playerOrder: [host.id],
     words: [],
@@ -180,6 +315,22 @@ function createRoomObject(code, host) {
     turnEndsAt: null,
     turnCount: 0,
     turnToken: 0,
+    turnSeconds: 15,
+    turnDurationMs: null,
+    turnStartedAt: null,
+    gameId: 0,
+    round: 0,
+    roundToken: 0,
+    roundTimer: null,
+    breakTimer: null,
+    roundEndsAt: null,
+    nextRoundAt: null,
+    roundResult: null,
+    mission: '',
+    matchWords: [],
+    matchWordCount: 0,
+    summary: null,
+    startedAt: null,
     winnerId: null,
     createdAt: now,
     cleanupTimer: null
@@ -201,7 +352,7 @@ function findRoomPlayer(playerId, code) {
 }
 
 io.on('connection', socket => {
-  socket.emit('server:hello', { dictionarySize: dictionary.size, version: '0.1.0' });
+  socket.emit('server:hello', { dictionarySize: dictionary.size, version: '0.2.0' });
 
   socket.on('room:create', (payload = {}, callback) => {
     try {
@@ -210,7 +361,7 @@ io.on('connection', socket => {
       if (!name) return sendAck(callback, { ok: false, message: '닉네임은 한글·영문·숫자 2~12자로 입력해 주세요.' });
       const playerId = safePlayerId(payload.playerId);
       const code = createCode();
-      const host = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, eliminated: false };
+      const host = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0 };
       const room = createRoomObject(code, host);
       rooms.set(code, room);
       attachPlayer(room, host, socket);
@@ -241,7 +392,7 @@ io.on('connection', socket => {
     }
     if (room.state !== 'lobby') return sendAck(callback, { ok: false, message: '게임이 이미 시작된 방에는 새로 참가할 수 없어요.' });
     if (orderedPlayers(room).length >= room.settings.maxPlayers) return sendAck(callback, { ok: false, message: '방 인원이 가득 찼어요.' });
-    const player = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, eliminated: false };
+    const player = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0 };
     room.players.set(playerId, player);
     room.playerOrder.push(playerId);
     attachPlayer(room, player, socket);
@@ -281,9 +432,13 @@ io.on('connection', socket => {
     if (player.id !== room.hostId || room.state !== 'lobby') return sendAck(callback, { ok: false, message: '방장만 대기실 설정을 바꿀 수 있어요.' });
     const turnSeconds = Number(payload.turnSeconds);
     const maxPlayers = Number(payload.maxPlayers);
+    const totalSeconds = payload.totalSeconds === undefined ? room.settings.totalSeconds : Number(payload.totalSeconds);
+    const rounds = payload.rounds === undefined ? room.settings.rounds : Number(payload.rounds);
     if (![10, 15, 20, 30].includes(turnSeconds)) return sendAck(callback, { ok: false, message: '제한 시간 설정이 올바르지 않아요.' });
+    if (!TOTAL_TIME_OPTIONS.includes(totalSeconds)) return sendAck(callback, { ok: false, message: '라운드 총 시간 설정이 올바르지 않아요.' });
+    if (!ROUND_OPTIONS.includes(rounds)) return sendAck(callback, { ok: false, message: '라운드 수 설정이 올바르지 않아요.' });
     if (![2, 3, 4, 5, 6, 7, 8].includes(maxPlayers) || maxPlayers < orderedPlayers(room).length) return sendAck(callback, { ok: false, message: '최대 인원은 현재 인원보다 적을 수 없어요.' });
-    room.settings = { turnSeconds, maxPlayers };
+    room.settings = { turnSeconds, maxPlayers, totalSeconds, rounds };
     broadcast(room);
     sendAck(callback, { ok: true });
   });
@@ -298,14 +453,7 @@ io.on('connection', socket => {
     if (room.state !== 'lobby') return sendAck(callback, { ok: false, message: '이미 게임이 진행 중이에요.' });
     if (players.length < 2) return sendAck(callback, { ok: false, message: '친구가 한 명 이상 참가해야 시작할 수 있어요.' });
     if (players.some(item => !item.online || !item.ready)) return sendAck(callback, { ok: false, message: '모든 플레이어가 접속하고 준비를 마쳐야 해요.' });
-    room.state = 'playing';
-    room.words = [];
-    room.usedWords.clear();
-    room.lastSyllable = '';
-    room.turnCount = 1;
-    room.winnerId = null;
-    players.forEach(item => { item.score = 0; item.eliminated = false; });
-    startTurn(room, 0);
+    startMatch(room);
     broadcast(room);
     sendAck(callback, { ok: true });
   });
@@ -322,19 +470,26 @@ io.on('connection', socket => {
     const result = validateWord(payload.word, dictionary, room.usedWords, room.lastSyllable);
     if (!result.ok) return sendAck(callback, { ok: false, code: result.code, message: result.message });
     const word = result.word;
+    const now = Date.now();
+    const bonus = hasMissionLetter(word, room.mission) ? MISSION_BONUS : 0;
+    const points = word.length * 10 + bonus;
     room.usedWords.add(word);
     room.lastSyllable = word[word.length - 1];
-    player.score += word.length * 10;
-    room.words.push({ type: 'word', word, playerId: player.id, playerName: player.name, points: word.length * 10, at: Date.now() });
+    player.score += points;
+    player.roundScore += points;
+    const entry = { type: 'word', word, playerId: player.id, playerName: player.name, points, bonus, elapsedMs: now - room.turnStartedAt, at: now };
+    room.words.push(entry);
+    room.matchWords.push(entry);
+    room.matchWordCount += 1;
     const next = findNextActiveIndex(room, room.turnIndex);
     if (next < 0 || activePlayers(room).length <= 1) {
-      finishGame(room);
+      endRound(room, 'last');
     } else {
       room.turnCount += 1;
       startTurn(room, next);
       broadcast(room);
     }
-    sendAck(callback, { ok: true, word, points: word.length * 10 });
+    sendAck(callback, { ok: true, word, points, bonus });
   });
 
   socket.on('game:rematch', (payload = {}, callback) => {
@@ -343,18 +498,19 @@ io.on('connection', socket => {
     const player = room && playerForSocket(room, String(payload.playerId ?? ''), socket);
     if (!room || !player) return sendAck(callback, { ok: false, message: '방에 연결되어 있지 않아요.' });
     if (player.id !== room.hostId) return sendAck(callback, { ok: false, message: '방장만 다시 시작할 수 있어요.' });
+    if (room.state !== 'finished') return sendAck(callback, { ok: false, message: '경기가 끝난 뒤에 다시 시작할 수 있어요.' });
+    // 중간에 나간 사람은 새 경기에 데려가지 않는다.
+    for (const item of orderedPlayers(room)) {
+      if (item.left) {
+        room.players.delete(item.id);
+        room.playerOrder = room.playerOrder.filter(id => id !== item.id);
+      }
+    }
     const players = orderedPlayers(room);
     if (players.length < 2 || players.some(item => !item.online)) return sendAck(callback, { ok: false, message: '모든 친구가 다시 접속해야 시작할 수 있어요.' });
     clearTurnTimer(room);
-    if (room.cleanupTimer) { clearTimeout(room.cleanupTimer); room.cleanupTimer = null; }
-    room.state = 'playing';
-    room.words = [];
-    room.usedWords.clear();
-    room.lastSyllable = '';
-    room.turnCount = 1;
-    room.winnerId = null;
-    players.forEach(item => { item.score = 0; item.eliminated = false; item.ready = true; });
-    startTurn(room, 0);
+    players.forEach(item => { item.ready = true; });
+    startMatch(room);
     broadcast(room);
     sendAck(callback, { ok: true });
   });
@@ -376,18 +532,23 @@ io.on('connection', socket => {
       } else {
         broadcast(room);
       }
-    } else if (room.state === 'playing') {
+    } else if (room.state === 'playing' || room.state === 'intermission') {
       player.eliminated = true;
+      player.left = true;
       if (room.hostId === player.id) {
-        const nextHost = activePlayers(room).find(candidate => candidate.online) || activePlayers(room)[0];
+        const nextHost = livePlayers(room).find(candidate => candidate.online) || livePlayers(room)[0];
         room.hostId = nextHost ? nextHost.id : null;
       }
       room.words.push({ type: 'system', text: `${player.name}님이 게임에서 나갔습니다.`, at: Date.now() });
-      if (room.currentPlayerId === player.id) {
+      if (livePlayers(room).length < 2) {
+        if (room.state === 'playing') endRound(room, 'last'); else finishMatch(room);
+      } else if (room.state === 'intermission') {
+        broadcast(room);
+      } else if (room.currentPlayerId === player.id) {
         const next = findNextActiveIndex(room, room.turnIndex);
-        if (next < 0 || activePlayers(room).length <= 1) finishGame(room);
+        if (next < 0 || activePlayers(room).length <= 1) endRound(room, 'last');
         else { room.turnCount += 1; startTurn(room, next); broadcast(room); }
-      } else if (activePlayers(room).length <= 1) finishGame(room);
+      } else if (activePlayers(room).length <= 1) endRound(room, 'last');
       else broadcast(room);
     } else {
       room.players.delete(player.id);
@@ -395,6 +556,21 @@ io.on('connection', socket => {
       if (room.hostId === player.id) room.hostId = room.playerOrder[0] || null;
       broadcast(room);
     }
+    sendAck(callback, { ok: true });
+  });
+
+  socket.on('game:react', (payload = {}, callback) => {
+    const code = safeCode(payload.code);
+    const room = rooms.get(code);
+    const player = room && playerForSocket(room, String(payload.playerId ?? ''), socket);
+    if (!room || !player) return sendAck(callback, { ok: false, message: '방에 연결되어 있지 않아요.' });
+    if (room.state === 'lobby') return sendAck(callback, { ok: false, message: '게임이 시작된 뒤에 보낼 수 있어요.' });
+    const emoji = String(payload.emoji ?? '');
+    if (!REACTION_EMOJIS.includes(emoji)) return sendAck(callback, { ok: false, message: '보낼 수 없는 반응이에요.' });
+    const now = Date.now();
+    if (now - player.lastReactAt < REACTION_COOLDOWN_MS) return sendAck(callback, { ok: false, throttled: true });
+    player.lastReactAt = now;
+    io.to(roomChannel(room.code)).emit('game:reaction', { playerId: player.id, name: player.name, emoji });
     sendAck(callback, { ok: true });
   });
 
@@ -412,12 +588,12 @@ io.on('connection', socket => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`WORDLINK v0.1.0 listening on http://${HOST}:${PORT}`);
+  console.log(`WORDLINK v0.2.0 listening on http://${HOST}:${PORT}`);
   console.log(`Dictionary: ${dictionary.size.toLocaleString('en-US')} words`);
 });
 
 function shutdown() {
-  for (const room of rooms.values()) clearTurnTimer(room);
+  for (const room of rooms.values()) { clearTurnTimer(room); clearRoundTimers(room); }
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000).unref();
 }

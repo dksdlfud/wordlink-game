@@ -65,6 +65,43 @@ function validateWord(value, dictionary, usedWords, requiredFirst = '') {
   return { ok: true, word };
 }
 
+
+// ── 라운드제 · 미션 글자 ─────────────────────────────────
+// 라운드 총 시간(초). 방장이 대기실에서 고른다.
+const TOTAL_TIME_OPTIONS = [20, 40, 60, 80, 100, 150, 500];
+const ROUND_OPTIONS = [3, 5, 7];
+const DEFAULT_TOTAL_SECONDS = 60;
+const DEFAULT_ROUNDS = 3;
+const MISSION_BONUS = 30;
+const MIN_TURN_SECONDS = 5;
+
+// 라운드가 지날수록 턴 제한 시간이 줄어든다. (라운드마다 13%씩, 기본 시간의 35%까지)
+// 예) 15초 → 15, 13, 11, 9, 7, 5, 5
+function turnSecondsForRound(baseSeconds, roundIndex) {
+  const base = Number(baseSeconds) || 15;
+  const factor = Math.max(0.35, 1 - 0.13 * Math.max(0, roundIndex));
+  return Math.max(MIN_TURN_SECONDS, Math.min(base, Math.round(base * factor)));
+}
+
+// 사전에서 너무 드물지도, 너무 흔하지도 않은 글자만 미션 후보로 모은다.
+function buildMissionPool(dictionary, { min = 1500, max = 12000 } = {}) {
+  const counts = new Map();
+  for (const word of dictionary) {
+    for (const ch of new Set(word)) counts.set(ch, (counts.get(ch) || 0) + 1);
+  }
+  return [...counts].filter(([, n]) => n >= min && n <= max).map(([ch]) => ch).sort();
+}
+
+function pickMissionLetter(pool, exclude = '', random = Math.random) {
+  const candidates = pool.filter(ch => ch !== exclude);
+  const list = candidates.length ? candidates : pool;
+  return list.length ? list[Math.floor(random() * list.length)] : '';
+}
+
+function hasMissionLetter(word, letter) {
+  return Boolean(letter) && String(word ?? '').includes(letter);
+}
+
 // 서버가 허용하는 이모지 반응 목록 (클라이언트 버튼과 동일하게 유지)
 const REACTION_EMOJIS = ['👍', '😂', '😮', '🔥', '👏', '😭'];
 
@@ -89,12 +126,13 @@ function buildRoundSummary({ players, words, winnerId = null, startedAt = null, 
       name: player.name,
       score: player.score,
       eliminated: Boolean(player.eliminated),
+      roundWins: Number.isFinite(player.roundWins) ? player.roundWins : 0,
       isWinner: player.id === winnerId,
       wordCount: stats.get(player.id).wordCount,
       longestWord: stats.get(player.id).longestWord,
       order
     }))
-    .sort((a, b) => Number(a.eliminated) - Number(b.eliminated) || b.score - a.score || b.wordCount - a.wordCount || a.order - b.order)
+    .sort((a, b) => Number(a.eliminated) - Number(b.eliminated) || b.roundWins - a.roundWins || b.score - a.score || b.wordCount - a.wordCount || a.order - b.order)
     .map(({ order, ...row }, index) => ({ ...row, rank: index + 1 }));
   return {
     totalWords: played.length,
@@ -105,4 +143,8 @@ function buildRoundSummary({ players, words, winnerId = null, startedAt = null, 
   };
 }
 
-module.exports = { normalizeWord, validateWord, allowedFirstSyllables, buildRoundSummary, HANGUL_WORD, REACTION_EMOJIS };
+module.exports = {
+  normalizeWord, validateWord, allowedFirstSyllables, buildRoundSummary, HANGUL_WORD, REACTION_EMOJIS,
+  TOTAL_TIME_OPTIONS, ROUND_OPTIONS, DEFAULT_TOTAL_SECONDS, DEFAULT_ROUNDS, MISSION_BONUS, MIN_TURN_SECONDS,
+  turnSecondsForRound, buildMissionPool, pickMissionLetter, hasMissionLetter
+};

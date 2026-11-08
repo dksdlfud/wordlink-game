@@ -358,7 +358,7 @@ body.modal-open { overflow: hidden; }
 .game-top-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .game-top-actions button { min-height: 36px; padding: 0 14px; font-size: 11px; }
 .game-top-info { display: flex; align-items: center; gap: 14px; margin-left: auto; }
-.stage { display: grid; grid-template-columns: 130px minmax(0, 1fr) 130px; gap: 20px; align-items: center; padding: 22px 24px; }
+.stage { display: grid; grid-template-columns: 130px 130px minmax(0, 1fr) 130px; gap: 20px; align-items: center; padding: 22px 24px; }
 .stage-center { position: relative; z-index: 1; min-width: 0; text-align: center; }
 .stage-center .chain-current { min-height: 64px; margin-top: 6px; }
 .stage-center .timer-track { margin-top: 10px; }
@@ -381,8 +381,30 @@ body.modal-open { overflow: hidden; }
   .game-top-info { margin-left: 0; width: 100%; justify-content: space-between; }
   .game-top-actions { width: 100%; }
   .game-top-actions button { flex: 1; }
-  .stage { grid-template-columns: 1fr 1fr; gap: 10px; padding: 16px; }
+  .stage { grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 16px; }
   .stage-center { grid-column: 1 / -1; grid-row: 1; }
   .stage-side { min-height: 96px; align-self: stretch; }
   .stage-letter { font-size: 28px; }
+}
+
+
+/* ===== 미션 글자 · 라운드제 ===== */
+:root { --mission: #e8c27a; }
+.stage-mission { border-color: rgba(232, 194, 122, .38); background: rgba(232, 194, 122, .07); }
+.stage-mission .stage-side-label { color: var(--mission); }
+.stage-mission .stage-letter { color: var(--mission); }
+.stage-side-note { color: #8d8d95; font-size: 9px; font-weight: 700; letter-spacing: .04em; }
+.stage-mission .stage-side-note { color: rgba(232, 194, 122, .8); }
+.game-round { padding: 3px 9px; border: 1px solid var(--line-strong); border-radius: 99px; color: #cfcfd4; font-size: 10px; font-weight: 800; letter-spacing: .08em; font-variant-numeric: tabular-nums; }
+.game-round #round-clock { color: var(--mint); }
+.game-round #round-clock.low { color: var(--danger); }
+.history-bonus { color: var(--mission); font-style: normal; font-weight: 800; }
+.round-banner { border-color: rgba(232, 194, 122, .3); }
+.round-banner .break-count-line { margin-top: 8px; color: var(--mission); font-weight: 700; }
+.field-hint { color: var(--muted-2); font-weight: 500; font-size: 10px; }
+@media (max-width: 560px) {
+  .stage-center { grid-column: 1 / -1; }
+  .stage-side { min-height: 84px; padding: 10px 6px; }
+  .stage-letter { font-size: 24px; }
+  .stage-side-note { font-size: 8px; }
 }
