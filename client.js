@@ -270,7 +270,7 @@
       <div id="summary-backdrop" class="summary-backdrop ${animate ? 'enter' : ''}" role="dialog" aria-modal="true" aria-labelledby="summary-title">
         <div class="summary-card" tabindex="-1">
           <button id="summary-close" class="summary-close" type="button" aria-label="결과 요약 닫기">✕</button>
-          <div class="summary-kicker">ROUND RESULT</div>
+          <div class="summary-kicker">라운드 결과</div>
           <h2 id="summary-title" class="summary-title">${winner ? `${escapeHtml(winner.name)} 승리!` : '게임 종료'}</h2>
           <p class="summary-sub">${winner ? '가장 많은 라운드를 이긴 플레이어예요.' : '이번 판의 결과를 확인해 보세요.'}</p>
           <div class="summary-stats">${tiles}</div>
@@ -335,9 +335,9 @@
           <h1 class="hero-title">단어를 잇고,<br><span class="accent">친구와 플레이.</span></h1>
           <p class="hero-description">마지막 글자에서 다음 단어가 시작되는 순간. 친구를 초대하고, 제한 시간 안에 가장 기발한 단어를 이어 보세요.</p>
           <div class="feature-row">
-            <span class="feature-chip"><b>01</b> 실시간 대전</span>
-            <span class="feature-chip"><b>02</b> 친구 초대</span>
-            <span class="feature-chip"><b>03</b> 점수 경쟁</span>
+            <span class="feature-chip"><b>⚡</b> 실시간 대전</span>
+            <span class="feature-chip"><b>🔗</b> 친구 초대</span>
+            <span class="feature-chip"><b>⭐</b> 점수 경쟁</span>
           </div>
         </div>
         <section class="home-card">
@@ -357,7 +357,7 @@
             </div>
           </div>
           <button id="create-room" class="primary-button button-full">새 게임방 만들기 <span aria-hidden="true">↗</span></button>
-          <div class="divider-label">OR JOIN A ROOM</div>
+          <div class="divider-label">또는 방 코드로 참가</div>
           <div class="join-row">
             <input id="join-code" class="text-input code-input" type="text" maxlength="5" placeholder="방 코드 5자리" autocomplete="off" value="${escapeHtml(queryCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5))}">
             <button id="join-room" class="secondary-button">참가하기</button>
@@ -429,7 +429,7 @@
       <div class="player-row">
         ${avatar(player.name)}
         <div class="player-info">
-          <div class="player-name">${escapeHtml(player.name)} ${player.isHost ? '<span class="host-label">HOST</span>' : ''}</div>
+          <div class="player-name">${escapeHtml(player.name)} ${player.isHost ? '<span class="host-label">방장</span>' : ''}</div>
           <div class="player-meta">${player.online ? '온라인 · 참가 중' : '연결 끊김'}</div>
         </div>
         <span class="player-status ${player.ready ? 'ready' : player.online ? '' : 'offline'}">${player.ready ? '준비 완료' : player.online ? '대기 중' : '오프라인'}</span>
@@ -464,7 +464,7 @@
       <section class="fade-in">
         <div class="page-heading-row">
           <div><span class="eyebrow">WAITING ROOM</span><h1 class="page-title">친구들이 모이는 중</h1><p class="page-description">모든 플레이어가 준비되면 방장이 게임을 시작할 수 있어요.</p></div>
-          <div class="room-code-pill"><small>ROOM CODE</small><strong>${escapeHtml(room.code)}</strong></div>
+          <div class="room-code-pill"><small>방 코드</small><strong>${escapeHtml(room.code)}</strong></div>
         </div>
         <div class="lobby-grid">
           <section class="panel">
@@ -472,7 +472,7 @@
             <div class="player-list">${playerRows}${Array.from({ length: emptySlots }, () => `<div class="empty-slot"><span class="avatar">＋</span><span>친구를 기다리는 자리</span></div>`).join('')}</div>
           </section>
           <section class="panel settings-panel">
-            <div class="panel-header"><span class="panel-title">게임 설정</span><span class="panel-caption">${isHost ? 'HOST CONTROL' : 'VIEW ONLY'}</span></div>
+            <div class="panel-header"><span class="panel-title">게임 설정</span><span class="panel-caption">${isHost ? '방장 설정' : '보기 전용'}</span></div>
             <div class="settings-content">${settingsContent}</div>
           </section>
         </div>
@@ -563,7 +563,7 @@
     const firstShow = showSummary && state.summaryShownGame !== room.gameId;
     if (showSummary) state.summaryShownGame = room.gameId;
     const summaryHtml = showSummary ? summaryMarkup(room, isHost, firstShow) : '';
-    const reactionBar = `<section class="reaction-bar" aria-label="이모지 반응"><span class="reaction-label">REACT</span><div class="reaction-buttons">${REACTIONS.map(emoji => `<button type="button" class="reaction-button" data-emoji="${emoji}" aria-label="${emoji} 반응 보내기">${emoji}</button>`).join('')}</div></section>`;
+    const reactionBar = `<section class="reaction-bar" aria-label="이모지 반응"><span class="reaction-label">반응</span><div class="reaction-buttons">${REACTIONS.map(emoji => `<button type="button" class="reaction-button" data-emoji="${emoji}" aria-label="${emoji} 반응 보내기">${emoji}</button>`).join('')}</div></section>`;
     app.innerHTML = `
       <section class="fade-in game-screen">
         <div class="game-topline">
@@ -573,38 +573,38 @@
             ${finished && room.summary ? '<button id="open-summary" class="secondary-button">결과 요약 보기</button>' : ''}
             ${finished && isHost ? '<button id="rematch" class="primary-button">다시 플레이 ↗</button>' : finished ? '<button class="secondary-button" disabled>방장이 다시 시작할 수 있어요</button>' : ''}
           </div>
-          <div class="game-top-info"><span class="game-tag">LIVE WORD BATTLE</span><span class="game-round">ROUND ${room.round}/${room.totalRounds}${isPlaying ? ' · <span id="round-clock">–</span>' : ''}</span><span class="game-code">ROOM ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존 <span class="footer-dot">·</span> ${wordCount}개 단어</span></div>
+          <div class="game-top-info"><span class="game-tag">실시간 대결</span><span class="game-round">${room.round}/${room.totalRounds} 라운드${isPlaying ? ' · <span id="round-clock">–</span>' : ''}</span><span class="game-code">방 ${escapeHtml(room.code)} <span class="footer-dot">·</span> ${alive}명 생존 <span class="footer-dot">·</span> ${wordCount}개 단어</span></div>
         </div>
         ${winnerContent}${breakContent}
         <section class="turn-card stage">
           <div class="stage-side stage-next">
-            <span class="stage-side-label">NEXT</span>
+            <span class="stage-side-label">다음 글자</span>
             <strong class="stage-letter">${allowedChip || '?'}</strong>
           </div>
           <div class="stage-side stage-mission${state.missionFlashSeq && room.missionChange && room.missionChange.seq === state.missionFlashSeq ? ' mission-new' : ''}" title="미션 글자가 들어간 단어를 내면 +${room.missionBonus}점 보너스!">
-            <span class="stage-side-label">MISSION</span>
+            <span class="stage-side-label">미션</span>
             <strong class="stage-letter">${room.mission ? escapeHtml(room.mission) : '?'}</strong>
             <span class="stage-side-note">포함 시 +${room.missionBonus}</span>
           </div>
           <div class="stage-center">
-            <div class="turn-label">${finished ? 'MATCH COMPLETE' : onBreak ? 'ROUND BREAK' : 'CURRENT TURN'}</div>
+            <div class="turn-label">${finished ? '경기 종료' : onBreak ? '라운드 휴식' : '현재 차례'}</div>
             <div class="turn-name">${turnName}</div>
             <div class="turn-hint">${finished ? '친구들과 한 판 더 즐겨 보세요.' : turnHint}</div>
             <div class="chain-current">${chain ? `<span class="chain-word">${escapeHtml(chain.word)}</span>` : '<span class="chain-word empty">첫 단어를 기다리고 있어요</span>'}</div>
             <div class="timer-track"><div id="timer-fill" class="timer-fill"></div></div>
           </div>
           <div class="stage-side stage-chain">
-            <span class="stage-side-label">CHAIN</span>
+            <span class="stage-side-label">연결</span>
             <strong class="stage-letter">${wordCount}</strong>
             <div class="turn-clock"><span class="clock-icon">◷</span><span id="clock-number" class="clock-number">${isPlaying ? room.turnSeconds : '—'}</span></div>
           </div>
         </section>
         <div class="players-row">
-          <section class="panel score-panel"><div class="panel-header"><span class="panel-title">플레이어 순위</span><span class="panel-caption">SCORE</span></div><div class="score-list">${scoreRows}</div></section>
+          <section class="panel score-panel"><div class="panel-header"><span class="panel-title">플레이어 순위</span><span class="panel-caption">점수</span></div><div class="score-list">${scoreRows}</div></section>
           <section class="panel rules-panel"><h3 class="rules-title">게임 규칙</h3><div class="rule-line"><i class="rule-dot"></i><span>마지막 글자로 시작하는 단어를 입력해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>단어는 2~12글자, 사전에 등록된 단어만 가능해요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>한 번 사용한 단어는 다시 사용할 수 없어요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>턴 시간 안에 못 내면 그 라운드에서 탈락해요. 글자 수 × 10점!</span></div><div class="rule-line"><i class="rule-dot"></i><span>미션 글자가 들어간 단어는 +${room.missionBonus}점 보너스예요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>라운드가 지날수록 턴 제한 시간이 줄어들어요.</span></div><div class="rule-line"><i class="rule-dot"></i><span>마지막 생존자, 또는 라운드 시간 종료 시 최고 점수가 그 라운드 승리! 가장 많이 이긴 사람이 우승해요.</span></div></section>
         </div>
         <section class="panel history-panel chat-panel">
-          <div class="panel-header"><span class="panel-title">단어 기록</span><span class="panel-caption">${wordCount} WORDS</span></div>
+          <div class="panel-header"><span class="panel-title">단어 기록</span><span class="panel-caption">${wordCount}개</span></div>
           <div id="history-list" class="history-list">${history || '<div class="history-empty">아직 입력된 단어가 없어요.<br>첫 번째 단어의 주인공이 되어 보세요!</div>'}</div>
           <div class="chat-entry">
             <form id="word-form" class="entry-form">

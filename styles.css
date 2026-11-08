@@ -691,3 +691,135 @@ body {
   .stage-next { min-height: 84px; }
   .players-row .score-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* =====================================================================
+   ✨ POLISH v2 — 가독성 · 대비 · 위계 개선 (BRIGHT THEME 위에 덮어씀)
+   이 블록만 지우면 이전 모양으로 돌아갑니다.
+   ===================================================================== */
+:root {
+  --bg: #6cc24a;
+  --green-ink: #163f1a;
+  --green-edge: #2a6b2a;
+  --r-lg: 24px; --r-md: 16px; --r-sm: 12px;
+  --focus: #1a4fd6;
+}
+html { background: #6cc24a; }
+body {
+  font-size: 15px; line-height: 1.55; word-break: keep-all;
+  background-color: #6cc24a;
+  background-image: conic-gradient(#68bd46 25%, #76cc54 0 50%, #68bd46 0 75%, #76cc54 0);
+}
+:where(button, input, select, a):focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+
+/* 스티커 글씨: 초록 배경 위에서도 또렷하게 */
+.hero-title, .page-title, .brand-name, .score-panel .panel-title {
+  color: #fff; text-shadow: 0 3px 0 var(--green-edge);
+  -webkit-text-stroke: 5px var(--green-edge); paint-order: stroke fill;
+}
+.brand-name { -webkit-text-stroke: 4px var(--green-edge); text-shadow: 0 2px 0 var(--green-edge); font-size: 20px; }
+.hero-title { font-size: clamp(44px, 6vw, 72px); line-height: 1.15; }
+.hero-title .accent { color: #ffe27a; }
+.page-title { font-size: 34px; }
+.score-panel .panel-title { -webkit-text-stroke: 4px var(--green-edge); font-size: 20px; }
+
+/* 이름표성 영문 라벨 정리 */
+.eyebrow, .card-kicker { display: none; }
+.topbar-tag, .game-tag, .game-code, .site-footer, .score-panel .panel-caption {
+  letter-spacing: 0; text-shadow: none; font-size: 12px; font-weight: 700; color: var(--green-ink);
+}
+.topbar-tag { color: #fff; background: rgba(22, 63, 26, .55); padding: 6px 12px; border-radius: 99px; }
+.footer-dot { color: rgba(22, 63, 26, .5); }
+.brand-version { color: #fff; background: rgba(22, 63, 26, .55); border: 0; font-size: 11px; letter-spacing: 0; }
+.page-description, .hero-description { color: var(--green-ink); font-size: 15px; font-weight: 600; }
+.hero-description { max-width: 440px; line-height: 1.8; }
+
+/* 작은 글자 키우기 (최소 12px) */
+.player-meta, .panel-caption, .setting-note, .entry-help, .history-player, .history-points, .history-index,
+.score-state, .stage-side-note, .reaction-label, .summary-stat small, .summary-stat span, .summary-name small,
+.summary-sub, .summary-kicker, .field-hint, .home-footnote, .host-label, .player-status, .summary-me, .divider-label {
+  font-size: 12px; letter-spacing: 0;
+}
+.rule-line { font-size: 13px; line-height: 1.6; }
+.rule-dot { margin-top: 7px; }
+.field-label { font-size: 13px; }
+.card-subtitle, .invite-strip p { font-size: 13px; }
+.invite-strip b { font-size: 14px; }
+.player-name { font-size: 15px; }
+.panel-title { font-size: 17px; }
+.history-word { font-size: 17px; }
+.history-item { padding: 12px 2px; }
+.history-item .avatar { width: 28px; height: 28px; font-size: 13px; }
+.feature-chip { font-size: 13px; padding: 9px 14px; font-weight: 700; }
+.feature-chip b { margin-right: 6px; }
+
+/* 입력 · 버튼 */
+.text-input, .select-input { height: 52px; font-size: 16px; }
+.primary-button, .secondary-button, .ghost-button { min-height: 52px; font-size: 15px; }
+.game-top-actions button { min-height: 42px; font-size: 13px; }
+.room-code-pill strong { font-size: 24px; }
+.room-code-pill small { font-size: 11px; letter-spacing: 0; }
+.entry-form { grid-template-columns: minmax(0, 1fr) 120px; }
+.entry-form .text-input { height: 58px; font-size: 18px; }
+.entry-form .primary-button { min-height: 58px; }
+.player-status { padding: 6px 10px; }
+
+/* 카드 통일감 */
+.panel, .home-card, .surface-card { border-radius: var(--r-lg); }
+.panel { border-width: 4px; }
+.player-row { padding: 14px 8px; }
+.avatar { width: 42px; height: 42px; font-size: 17px; }
+
+/* 보드: 다음 글자가 주인공 */
+.turn-card.stage { grid-template-columns: 160px minmax(0, 1fr) 120px; padding: 30px 24px 20px; }
+.stage-next { min-height: 132px; box-shadow: 0 5px 0 rgba(0,0,0,.25), inset 0 0 0 4px rgba(255,255,255,.55); }
+.stage-next .stage-letter { font-size: clamp(44px, 5vw, 62px); line-height: 1; }
+.stage-side-label { font-size: 13px; letter-spacing: 0; font-weight: 800; }
+.stage-chain .stage-side-label { font-size: 11px; letter-spacing: 0; }
+.stage-chain .clock-number { font-size: 16px; }
+.stage-mission .stage-side-label { font-size: 13px; }
+.stage-mission .stage-letter { font-size: 34px; }
+.stage-mission .stage-side-note { font-size: 13px; }
+.turn-label { font-size: 12px; letter-spacing: 0; }
+.turn-name { font-size: 24px; margin: 8px 0 4px; }
+.turn-hint { font-size: 13px; }
+.chain-word { font-size: clamp(34px, 6vw, 54px); }
+.chain-word.empty { font-size: 18px; }
+.chain-current { min-height: 84px; }
+.timer-track { height: 16px; margin-top: 12px; }
+.timer-fill.low { animation: timer-warn .6s ease-in-out infinite alternate; }
+@keyframes timer-warn { to { filter: brightness(1.25); } }
+.game-round { font-size: 13px; letter-spacing: 0; padding: 5px 12px; }
+
+/* 플레이어 카드 */
+.players-row .score-list { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.score-row .avatar { width: 56px; height: 56px; font-size: 22px; }
+.score-name { font-size: 14px; }
+.score-points { font-size: 22px; letter-spacing: .04em; }
+.score-row.current { border-color: #ffb300; }
+
+/* 반응 · 요약 */
+.reaction-button { width: 48px; height: 44px; font-size: 21px; }
+.reaction-name { font-size: 12px; }
+.summary-stat strong { font-size: 20px; }
+.summary-name { font-size: 15px; }
+.summary-score { font-size: 18px; }
+.toast { font-size: 14px; }
+.sound-toggle { font-size: 13px; }
+.sound-toggle .sound-state { font-size: 11px; letter-spacing: 0; }
+
+/* 모바일 */
+@media (max-width: 560px) {
+  body { font-size: 14px; }
+  .hero-title { font-size: 46px; -webkit-text-stroke-width: 4px; }
+  .page-title { font-size: 28px; }
+  .turn-card.stage { grid-template-columns: 1fr 104px; padding: 26px 14px 14px; }
+  .stage-next { min-height: 104px; }
+  .stage-next .stage-letter { font-size: 48px; }
+  .stage-mission .stage-letter { font-size: 28px; }
+  .stage-mission .stage-side-note { font-size: 12px; }
+  .chain-word { font-size: 36px; }
+  .entry-form { grid-template-columns: minmax(0, 1fr) 96px; }
+  .entry-form .text-input { font-size: 16px; }
+  .score-row .avatar { width: 48px; height: 48px; }
+  .site-footer { font-size: 11px; }
+}
