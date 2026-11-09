@@ -606,7 +606,25 @@ function findRoomPlayer(playerId, code) {
   return player ? { room, player } : null;
 }
 
+// 접속 후 6분 30초 동안 아무 조작이 없으면 서버 자원을 아끼기 위해 접속을 끊는다.
+// (클라이언트가 먼저 안내 문구와 함께 접속을 종료하고, 이쪽은 클라이언트가 응답하지 않을 때를 위한 안전장치다.)
+const IDLE_LIMIT_MS = (6 * 60 + 30) * 1000;
+const IDLE_GRACE_MS = 30 * 1000;
+const IDLE_MESSAGE = '6분 30초 동안 조작이 없어 서버 자원 절약을 위해 접속이 종료되었습니다.';
+const idleSweeper = setInterval(() => {
+  const nowMs = Date.now();
+  for (const client of io.sockets.sockets.values()) {
+    if (nowMs - (client.data.lastActive || nowMs) > IDLE_LIMIT_MS + IDLE_GRACE_MS) {
+      client.emit('idle:timeout', { message: IDLE_MESSAGE });
+      client.disconnect(true);
+    }
+  }
+}, 15000);
+idleSweeper.unref();
+
 io.on('connection', socket => {
+  socket.data.lastActive = Date.now();
+  socket.on('activity', () => { socket.data.lastActive = Date.now(); });
   const login = auth.sessionFromCookieHeader(socket.handshake.headers.cookie);
   if (login) socket.data.auth = { provider: login.provider, playerId: login.playerId, statsKey: login.statsKey };
   socket.emit('server:hello', { dictionarySize: dictionary.size, version: VERSION, avatars: AVATARS });

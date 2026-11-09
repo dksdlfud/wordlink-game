@@ -33,6 +33,7 @@
     profile: null,           // 내 경험치·전적 (null: 아직 모름 · { guest: true }: 게스트 · 그 밖에는 서버가 준 프로필)
     rewards: new Map(),      // gameId → 그 경기에서 받은 경험치 (결과 화면에 표시)
     dialogClose: null,
+    idleClosed: false,       // 무조작으로 접속이 종료됐는지
     draft: { key: '', value: '' }, // 입력 중인 단어 (화면이 다시 그려져도 유지)
     screen: '',   // 지금 보이는 화면 종류 (home · hub · lobby · game) — 같은 화면을 다시 그릴 땐 등장 애니메이션을 생략한다.
     shown: null   // 직전에 그린 게임 화면의 스냅샷 — 무엇이 바뀌었는지 비교해 필요한 곳만 움직인다.
@@ -53,11 +54,82 @@
     const section = app.firstElementChild;
     if (section) section.classList.remove('fade-in');
   }
+  // ---------- 화면 전환 모핑 (파워포인트 '모핑'처럼 이어지는 전환) ----------
+  // View Transitions API로 화면이 바뀔 때 같은 역할의 요소(내 프로필 사진 · 제목 · 목록 · 메인 패널 · 채팅)가
+  // 옛 화면의 위치·크기에서 새 화면의 위치·크기로 부드럽게 이어진다. 지원하지 않는 브라우저에서는 기존 등장 효과를 쓴다.
+  const reduceMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+  const SCREEN_RANK = { home: 0, hub: 1, lobby: 2, game: 3 };
+  const morphState = { pending: null };
+  function rowAvatar(rowSelector) {
+    const me = state.nickname;
+    if (!me) return null;
+    const row = [...app.querySelectorAll(rowSelector)].find(node => node.textContent.includes(me));
+    return row ? row.querySelector('.avatar') : null;
+  }
+  const SHARED_FINDERS = {
+    'vt-me': () => $('#home-avatar-preview', app) || $('.hub-profile-main .avatar', app) || rowAvatar('.player-row') || rowAvatar('.score-row'),
+    'vt-title': () => $('.hero-title', app) || $('.page-title', app),
+    'vt-list': () => $('.hub-users', app) || $('.lobby-grid > .panel', app) || $('.score-panel', app),
+    'vt-main': () => $('.hub-rooms', app) || $('.settings-panel', app) || $('.chain-strip-panel', app),
+    'vt-side': () => $('.home-card', app) || $('.hub-profile', app) || $('.invite-strip', app) || $('.entry-card', app),
+    'vt-chat': () => $('.hub-chat', app) || $('#room-chat-slot .panel', app)
+  };
+  function tagShared() {
+    for (const [name, find] of Object.entries(SHARED_FINDERS)) {
+      let node = null;
+      try { node = find(); } catch { node = null; }
+      if (node && !node.dataset.vtTag) { node.style.viewTransitionName = name; node.dataset.vtTag = name; }
+    }
+  }
+  function clearShared() {
+    app.querySelectorAll('[data-vt-tag]').forEach(node => { node.style.viewTransitionName = ''; delete node.dataset.vtTag; });
+  }
+  function canMorph() {
+    return typeof document.startViewTransition === 'function' && !reduceMotion.matches && !document.hidden && !state.idleClosed;
+  }
+  // 화면 종류(key)가 바뀔 때만 전환 효과를 쓰고, 같은 화면을 다시 그릴 때는 그대로 그린다.
+  function screenTransition(key, run) {
+    const job = morphState.pending;
+    if (job) { job.run = run; return; } // 전환을 준비하는 동안 들어온 갱신은 가장 최신 것만 남긴다.
+    if (state.screen === key || !canMorph()) { run(); return; }
+    const from = state.screen;
+    const root = document.documentElement;
+    const next = { run };
+    morphState.pending = next;
+    root.dataset.vt = '1';
+    tagShared();
+    let transition;
+    try {
+      transition = document.startViewTransition(() => {
+        morphState.pending = null;
+        next.run();
+        const forward = (SCREEN_RANK[state.screen] ?? 0) >= (SCREEN_RANK[from] ?? -1);
+        root.style.setProperty('--vt-dir', forward ? '1' : '-1');
+        tagShared();
+      });
+    } catch {
+      morphState.pending = null;
+      delete root.dataset.vt;
+      clearShared();
+      run();
+      return;
+    }
+    const finish = () => { delete root.dataset.vt; clearShared(); };
+    transition.finished.then(finish, finish);
+    transition.ready.catch(() => {});
+    transition.updateCallbackDone.catch(error => console.error(error));
+  }
+  function renderHome() { screenTransition('home', renderHomeImpl); }
+  function mountHub() { screenTransition('hub', mountHubImpl); }
+  function renderLobby(room) { screenTransition('lobby', () => renderLobbyImpl(room)); }
+  function renderGame(room) { screenTransition('game', () => renderGameImpl(room)); }
+
   // 목록을 통째로 갈아엎지 않고 달라진 항목만 바꾼다. (호버·애니메이션이 끊기지 않고, 새 항목만 부드럽게 등장)
   function patchList(container, items, keyOf, htmlOf, enterClass) {
     const hadItems = Boolean(container.querySelector('[data-key]'));
     const old = new Map();
-    for (const el of container.children) if (el.dataset && el.dataset.key) old.set(el.dataset.key, el);
+    const firstRects = new Map();
+    for (const el of container.children) if (el.dataset && el.dataset.key) { old.set(el.dataset.key, el); firstRects.set(el.dataset.key, el.getBoundingClientRect()); }
     const nodes = items.map(item => {
       const key = String(keyOf(item));
       const html = htmlOf(item).trim();
@@ -76,6 +148,18 @@
     nodes.forEach((node, index) => {
       if (container.children[index] !== node) container.insertBefore(node, container.children[index] || null);
     });
+    // 자리가 바뀐 항목은 순간이동하지 않고 이전 위치에서 새 위치로 부드럽게 미끄러진다. (FLIP)
+    if (firstRects.size && !reduceMotion.matches && typeof Element.prototype.animate === 'function') {
+      for (const node of nodes) {
+        const first = firstRects.get(node.dataset.key);
+        if (!first) continue;
+        const last = node.getBoundingClientRect();
+        const dx = first.left - last.left;
+        const dy = first.top - last.top;
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+        node.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }], { duration: 480, easing: 'cubic-bezier(.22, 1, .36, 1)' });
+      }
+    }
   }
 
   function escapeHtml(value) {
@@ -166,6 +250,7 @@
     return state.profile;
   }
   function setConnection(connected) {
+    if (state.idleClosed) { connectionDot.className = 'offline'; connectionLabel.textContent = '접속 종료됨'; return; }
     connectionDot.className = connected ? 'online' : 'offline';
     connectionLabel.textContent = connected ? '서버 연결됨' : '연결 끊김';
   }
@@ -603,7 +688,7 @@
   }
 
   // ---------- 홈 (닉네임 입력) ----------
-  function renderHome() {
+  function renderHomeImpl() {
     const sameScreen = enterScreen('home');
     document.body.classList.remove('modal-open');
     closeDialog();
@@ -768,7 +853,7 @@
     if (user.where === 'playing') return `게임중 ${user.roomNumber}번`;
     return '로비';
   }
-  function mountHub() {
+  function mountHubImpl() {
     enterScreen('hub');
     document.body.classList.remove('modal-open');
     closeDialog();
@@ -1115,7 +1200,7 @@
     });
   }
 
-  function renderLobby(room) {
+  function renderLobbyImpl(room) {
     const sameScreen = enterScreen('lobby');
     const roundsHadFocus = document.activeElement?.id === 'setting-rounds'; // 라운드 수를 입력하던 중에 화면이 갱신돼도 입력을 유지한다.
     captureRoomChat();
@@ -1260,7 +1345,7 @@
     if (state.nickname) { if (!(await enterLobby(state.nickname))) renderHome(); } else renderHome();
   }
 
-  function renderGame(room) {
+  function renderGameImpl(room) {
     const sameScreen = enterScreen('game');
     captureRoomChat();
     const prev = sameScreen && state.shown && state.shown.gameId === room.gameId ? state.shown : null;
@@ -1653,6 +1738,52 @@
     if (event.key === 'Escape' && document.body.classList.contains('dialog-open')) closeDialog();
     else if (event.key === 'Escape' && document.body.classList.contains('modal-open')) closeSummary();
   });
+
+  // ---------- 무조작 자동 종료 (6분 30초) ----------
+  const IDLE_LIMIT_MS = (6 * 60 + 30) * 1000;
+  const IDLE_MESSAGE = '6분 30초 동안 조작이 없어 서버 자원 절약을 위해 접속이 종료되었습니다.';
+  const ACTIVITY_PING_MS = 20000;
+  let lastActivityAt = Date.now();
+  let lastActivityPing = 0;
+  function markActivity() {
+    if (state.idleClosed) return;
+    const stamp = Date.now();
+    lastActivityAt = stamp;
+    if (stamp - lastActivityPing >= ACTIVITY_PING_MS && socket.connected) { lastActivityPing = stamp; socket.emit('activity'); } // 서버에도 '아직 쓰고 있어요'를 알린다.
+  }
+  function closeForIdle() {
+    if (state.idleClosed) return;
+    state.idleClosed = true;
+    morphState.pending = null;
+    closeDialog();
+    document.body.classList.remove('modal-open');
+    socket.io.opts.reconnection = false;
+    socket.disconnect();
+    setConnection(false);
+    for (const node of [app, $('.topbar'), $('.site-footer')]) if (node) node.inert = true;
+    const overlay = document.createElement('div');
+    overlay.className = 'idle-overlay';
+    overlay.innerHTML = `
+      <div class="dialog-card idle-card" role="alertdialog" aria-modal="true" aria-labelledby="idle-title" aria-describedby="idle-message" tabindex="-1">
+        <div class="idle-icon" aria-hidden="true">💤</div>
+        <h2 id="idle-title" class="dialog-title">접속 종료</h2>
+        <p id="idle-message" class="dialog-note"></p>
+        <div class="dialog-actions idle-actions"><button id="idle-reconnect" type="button" class="primary-button">다시 접속하기</button></div>
+      </div>`;
+    $('#idle-message', overlay).textContent = IDLE_MESSAGE;
+    document.body.append(overlay);
+    $('#idle-reconnect', overlay).addEventListener('click', () => location.reload());
+    $('#idle-reconnect', overlay).focus({ preventScroll: true });
+  }
+  function checkIdle() {
+    if (!state.idleClosed && Date.now() - lastActivityAt >= IDLE_LIMIT_MS) closeForIdle();
+  }
+  for (const type of ['pointerdown', 'pointermove', 'mousedown', 'keydown', 'wheel', 'touchstart', 'touchmove', 'scroll', 'click', 'input', 'focusin']) {
+    window.addEventListener(type, markActivity, { capture: true, passive: true });
+  }
+  document.addEventListener('visibilitychange', checkIdle);
+  setInterval(checkIdle, 1000);
+  socket.on('idle:timeout', closeForIdle);
 
   requestAnimationFrame(frameLoop);
   setConnection(false);

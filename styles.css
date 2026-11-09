@@ -1736,3 +1736,72 @@ input.text-input[type="number"] { appearance: textfield; -moz-appearance: textfi
 .avatar-choice.selected { border-color: #c46a00; background: #ffe2a0; }
 .avatar-choice:focus-visible { outline: 3px solid rgba(196,106,0,.4); outline-offset: 1px; }
 .avatar-choice-none { font-family: 'Jua', sans-serif; font-size: 20px; color: #3b2a14; }
+
+
+/* =====================================================================
+   화면 ↔ 화면 모핑 전환 · 자동 종료 안내
+   ===================================================================== */
+@view-transition { navigation: auto; }
+
+/* 전환 중에는 상단 바·푸터·도우미가 제자리에 가만히 머문다. */
+html[data-vt] .topbar { view-transition-name: vt-topbar; }
+html[data-vt] .site-footer { view-transition-name: vt-footer; }
+html[data-vt] .bokgu { view-transition-name: vt-bokgu; }
+/* 모핑이 화면을 움직이는 동안에는 기존 등장 효과를 쉰다. (겹쳐 보이는 것 방지) */
+html[data-vt] .fade-in, html[data-vt] .fade-in .panel, html[data-vt] .fade-in .hero-copy, html[data-vt] .fade-in .home-card,
+html[data-vt] .fade-in .hub-tabs, html[data-vt] .fade-in .page-heading-row, html[data-vt] .fade-in .game-topline,
+html[data-vt] .fade-in .chain-strip-panel, html[data-vt] .fade-in .players-row { animation: none !important; }
+
+/* 화면 전체: 옛 화면은 살짝 밀려나고, 새 화면은 앞으로 나아가며 겹쳐 나타난다. (뒤로 갈 땐 반대 방향) */
+::view-transition-group(root) { animation-duration: .6s; }
+::view-transition-old(root), ::view-transition-new(root) { mix-blend-mode: normal; animation-duration: .6s; animation-timing-function: cubic-bezier(.22, 1, .36, 1); animation-fill-mode: both; }
+::view-transition-old(root) { animation-name: vt-root-out; }
+::view-transition-new(root) { animation-name: vt-root-in; }
+@keyframes vt-root-out {
+  0%   { opacity: 1; transform: none; }
+  60%  { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(calc(var(--vt-dir, 1) * -2.5%), 0, 0) scale(.985); }
+}
+@keyframes vt-root-in {
+  from { opacity: 0; transform: translate3d(calc(var(--vt-dir, 1) * 3%), 10px, 0) scale(1.008); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 같은 역할의 요소: 옛 자리·크기에서 새 자리·크기로 이어진다. */
+::view-transition-group(vt-me), ::view-transition-group(vt-title), ::view-transition-group(vt-list),
+::view-transition-group(vt-main), ::view-transition-group(vt-side), ::view-transition-group(vt-chat) {
+  animation-duration: .72s; animation-timing-function: cubic-bezier(.22, 1, .36, 1);
+}
+::view-transition-old(vt-me), ::view-transition-new(vt-me), ::view-transition-old(vt-title), ::view-transition-new(vt-title),
+::view-transition-old(vt-list), ::view-transition-new(vt-list), ::view-transition-old(vt-main), ::view-transition-new(vt-main),
+::view-transition-old(vt-side), ::view-transition-new(vt-side), ::view-transition-old(vt-chat), ::view-transition-new(vt-chat) {
+  animation-duration: .72s; animation-timing-function: ease-in-out;
+}
+::view-transition-group(vt-topbar), ::view-transition-group(vt-footer), ::view-transition-group(vt-bokgu) { animation-duration: .01s; }
+
+/* 목록·카드 등장 (모핑을 못 쓰는 브라우저에서도 화면이 순서대로 피어나듯 나타난다) */
+@keyframes morph-rise { from { opacity: 0; transform: translate3d(0, 18px, 0) scale(.975); } to { opacity: 1; transform: none; } }
+.fade-in .hero-copy, .fade-in .home-card, .fade-in .hub-tabs, .fade-in .page-heading-row, .fade-in .game-topline,
+.fade-in .chain-strip-panel, .fade-in .players-row, .fade-in .panel { animation: morph-rise .7s var(--ease-out) backwards; }
+.fade-in .home-card, .fade-in .hub-tabs, .fade-in .panel:nth-of-type(1), .fade-in .chain-strip-panel { animation-delay: .06s; }
+.fade-in .panel:nth-of-type(2) { animation-delay: .12s; }
+.fade-in .panel:nth-of-type(3), .fade-in .players-row { animation-delay: .18s; }
+.fade-in .panel:nth-of-type(4) { animation-delay: .24s; }
+
+/* 버튼·카드: 누르면 살짝 눌리고, 놓으면 탄성 있게 돌아온다. */
+.primary-button:active, .secondary-button:active, .ghost-button:active, .hub-tab:active, .room-card:active, .entry-chip:active { transform: scale(.97); transition-duration: .08s; }
+.room-card, .hub-user, .player-row, .score-row, .panel { transition: transform .45s var(--spring), box-shadow .35s var(--ease-out), background-color .3s ease, border-color .3s ease, opacity .3s ease; }
+
+/* 무조작 자동 종료 안내 */
+.idle-overlay { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; padding: 16px; background: rgba(22, 63, 26, .62); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); animation: fade-bg .6s ease both; }
+.idle-card { width: min(440px, 100%); text-align: center; padding: 30px 28px 24px; animation: dialog-in .8s var(--spring) .08s both; }
+.idle-icon { display: inline-block; font-size: 46px; line-height: 1; margin-bottom: 8px; animation: idle-float 3.4s ease-in-out infinite; }
+.idle-card .dialog-note { font-size: 15px; font-weight: 700; line-height: 1.7; word-break: keep-all; }
+.idle-actions { justify-content: center; margin-top: 22px; }
+@keyframes idle-float { 0%, 100% { transform: translateY(0) rotate(-4deg); } 50% { transform: translateY(-7px) rotate(4deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation-duration: .01ms !important; }
+  .fade-in .hero-copy, .fade-in .home-card, .fade-in .hub-tabs, .fade-in .page-heading-row, .fade-in .game-topline,
+  .fade-in .chain-strip-panel, .fade-in .players-row, .fade-in .panel, .idle-icon, .idle-overlay, .idle-card { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
