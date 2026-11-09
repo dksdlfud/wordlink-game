@@ -21,7 +21,7 @@ const text = (value, max) => String(value ?? '').normalize('NFC').replace(/[\u00
 
 function blankProfile(now) {
   return {
-    name: '', provider: '', createdAt: now, lastSeenAt: now,
+    name: '', avatar: '', provider: '', createdAt: now, lastSeenAt: now,
     xp: 0, games: 0, wins: 0, roundWins: 0, totalScore: 0, bestMatchScore: 0,
     words: 0, longestWord: '', bestWord: '', bestWordPoints: 0, missionHits: 0,
     streak: 0, bestStreak: 0, recent: []
@@ -35,7 +35,7 @@ function sanitizeProfile(raw, now = Date.now()) {
     at: num(item?.at), rank: num(item?.rank), players: num(item?.players), score: num(item?.score), xp: num(item?.xp), won: Boolean(item?.won)
   })) : [];
   return {
-    name: text(raw.name, 12), provider: text(raw.provider, 12),
+    name: text(raw.name, 12), avatar: text(raw.avatar, 8), provider: text(raw.provider, 12),
     createdAt: num(raw.createdAt) || now, lastSeenAt: num(raw.lastSeenAt) || now,
     xp: num(raw.xp), games: num(raw.games), wins: num(raw.wins), roundWins: num(raw.roundWins),
     totalScore: num(raw.totalScore), bestMatchScore: num(raw.bestMatchScore), words: num(raw.words),
@@ -127,13 +127,15 @@ function createStore(options = {}) {
     size: () => profiles.size,
     has: key => profiles.has(key),
     // 접속할 때마다 호출: 없으면 만들고, 마지막 닉네임·접속 시각을 갱신한다.
-    touch(key, { name = '', provider = '' } = {}) {
+    touch(key, { name = '', provider = '', avatar = '', clearAvatar = false } = {}) {
       if (!KEY_PATTERN.test(key)) return null;
       let profile = profiles.get(key);
       if (!profile) { profile = blankProfile(now()); profiles.set(key, profile); }
       const nextName = text(name, 12);
       if (nextName) profile.name = nextName;
       if (provider) profile.provider = text(provider, 12);
+      if (avatar) profile.avatar = text(avatar, 8);
+      else if (clearAvatar) profile.avatar = '';
       profile.lastSeenAt = now();
       markDirty(key);
       return view(key, profile);
@@ -174,7 +176,7 @@ function createStore(options = {}) {
         .filter(profile => profile.games >= minGames && profile.name)
         .sort((a, b) => b.xp - a.xp || b.wins - a.wins || a.createdAt - b.createdAt)
         .slice(0, limit)
-        .map((profile, index) => ({ rank: index + 1, name: profile.name, level: levelInfo(profile.xp).level, xp: profile.xp, games: profile.games, wins: profile.wins }));
+        .map((profile, index) => ({ rank: index + 1, name: profile.name, avatar: profile.avatar || '', level: levelInfo(profile.xp).level, xp: profile.xp, games: profile.games, wins: profile.wins }));
     },
     rankOf(key) {
       const mine = profiles.get(key);

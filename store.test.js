@@ -141,3 +141,15 @@ test('저장에 실패하면 다음 flush에서 다시 시도한다', async () =
   console.error = originalError;
   assert.deepEqual(saved, [KEY]);
 });
+
+test('avatar: 저장되고, 다른 접속에서 touch 해도 유지되며, 지울 수 있다', async () => {
+  const store = createStore({ file: tmpFile(), persistDelay: 0 });
+  await store.ready;
+  assert.equal(store.touch(KEY, { name: '철수' }).avatar, '');
+  assert.equal(store.touch(KEY, { avatar: '🐶' }).avatar, '🐶');
+  assert.equal(store.touch(KEY, { name: '철수' }).avatar, '🐶'); // 사진 없이 touch 해도 그대로
+  store.recordMatch(KEY, match());
+  assert.equal(store.top(5)[0].avatar, '🐶');
+  assert.equal(store.touch(KEY, { clearAvatar: true }).avatar, '');
+  assert.equal(sanitizeProfile({ avatar: '<b>🐱' }).avatar, 'b🐱');
+});

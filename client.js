@@ -27,6 +27,7 @@
     lastTick: '',
     lastReactionAt: 0,
     nickname: null,          // 로비에 입장한 닉네임 (없으면 홈 화면)
+    avatar: readSavedAvatar(), // 내가 고른 프로필 사진 (빈 값이면 닉네임 첫 글자)
     auth: { providers: [], user: null }, // 소셜 로그인 상태 (/auth/me) — user가 있으면 로그인됨
     hub: { rooms: [], users: [], total: 0, chat: [], onlyJoinable: false },
     profile: null,           // 내 경험치·전적 (null: 아직 모름 · { guest: true }: 게스트 · 그 밖에는 서버가 준 프로필)
@@ -137,7 +138,18 @@
     const base = (hash >>> 8) & 1 ? 74 : 62;
     return `--av-a:hsl(${hue},58%,${base + 6}%);--av-b:hsl(${hue},52%,${base - 12}%);--av-fg:hsl(${hue},45%,10%)`;
   }
+  // 프로필 사진: 서버가 정한 이모지 목록에서 고른다. 닉네임 → 사진 대응표를 서버가 준 목록에서 계속 채워 둔다.
+  const AVATAR_KEY = 'wordlink.avatar';
+  const FALLBACK_AVATARS = ['🐶','🐱','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐦','🦉','🦄','🐙','🐳','🐢','🦖','🍀','⭐'];
+  const picByName = new Map();
+  let avatarChoices = FALLBACK_AVATARS;
+  function readSavedAvatar() { try { return localStorage.getItem(AVATAR_KEY) || ''; } catch { return ''; } }
+  function noteAvatars(list) {
+    for (const item of list || []) { if (!item || !item.name) continue; if (item.avatar) picByName.set(item.name, item.avatar); else picByName.delete(item.name); }
+  }
   function avatar(name, small = false) {
+    const pic = picByName.get(name);
+    if (pic) return `<span class="avatar tinted has-pic ${small ? 'small' : ''}" style="${avatarStyle(name)}">${escapeHtml(pic)}</span>`;
     return `<span class="avatar tinted ${small ? 'small' : ''}" style="${avatarStyle(name)}">${escapeHtml((name || '?').slice(0, 1))}</span>`;
   }
   // ---------- 레벨 ----------
@@ -158,6 +170,7 @@
     connectionLabel.textContent = connected ? '서버 연결됨' : '연결 끊김';
   }
   function setRoom(room) {
+    noteAvatars(room.players);
     state.room = room;
     render();
   }
@@ -407,6 +420,7 @@
     if ($('#dialog') !== node) return;
     const card = node.firstElementChild;
     card.classList.add('wide');
+    if (result.ok) noteAvatars(result.list);
     if (!result.ok) {
       card.innerHTML = `<h2 class="dialog-title">🏆 랭킹</h2><p class="dialog-note">${escapeHtml(result.message || '랭킹을 불러오지 못했어요.')}</p><div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>닫기</button></div>`;
     } else {
@@ -484,6 +498,7 @@
       state.restoring = false;
       if (result.ok) {
         state.nickname = saved.name;
+        noteAvatars(result.room.players);
         state.room = result.room;
         roomChat.code = null; // 연결이 끊긴 사이의 대화를 다시 받아 온다.
         saveSession(saved);
@@ -509,7 +524,7 @@
     }
   });
   socket.on('lobby:rooms', rooms => { state.hub.rooms = rooms; updateRooms(); updateProfile(); });
-  socket.on('lobby:users', payload => { state.hub.users = payload.list; state.hub.total = payload.total; updateUsers(); updateProfile(); });
+  socket.on('lobby:users', payload => { noteAvatars(payload.list); state.hub.users = payload.list; state.hub.total = payload.total; updateUsers(); updateProfile(); });
   socket.on('lobby:chat', message => {
     state.hub.chat.push(message);
     if (state.hub.chat.length > 80) state.hub.chat.shift();
@@ -534,6 +549,7 @@
   socket.on('notice', payload => showToast(payload.message || '알 수 없는 오류가 발생했어요.', payload.type || 'info'));
   socket.on('server:hello', payload => {
     document.documentElement.dataset.dictionarySize = String(payload.dictionarySize || 0);
+    if (Array.isArray(payload.avatars) && payload.avatars.length) avatarChoices = payload.avatars;
   });
 
   // ---------- 다이얼로그 ----------
@@ -624,6 +640,7 @@
               <span><b>직접 정하기</b><small>원하는 닉네임을 입력해요</small></span>
             </label>
           </div>` : ''}
+          <div class="home-avatar-row"><span id="home-avatar-preview" class="avatar tinted has-pic">${escapeHtml(state.avatar || '🙂')}</span><button id="pick-avatar" class="ghost-button" type="button">프로필 사진 고르기</button></div>
           <div id="nick-field"${mode === 'social' ? ' hidden' : ''}>
             <label class="field-label" for="display-name">플레이어 닉네임</label>
             <input id="display-name" class="text-input" type="text" maxlength="12" autocomplete="nickname" placeholder="닉네임을 입력하세요" value="${escapeHtml(localStorage.getItem('wordlink.nickname') || '')}">
@@ -646,6 +663,11 @@
       if (!ok) { renderHome(); return; }
       if (invite) { history.replaceState({}, '', location.pathname); await joinByCode(invite); }
     };
+    $('#pick-avatar').addEventListener('click', () => openAvatarPicker(value => {
+      setMyAvatar(value);
+      const preview = $('#home-avatar-preview');
+      if (preview) preview.textContent = state.avatar || '🙂';
+    }));
     $('#enter-lobby').addEventListener('click', () => enter(''));
     $('#display-name').addEventListener('keydown', event => { if (event.key === 'Enter') enter(''); });
     app.querySelectorAll('input[name="nick-mode"]').forEach(radio => radio.addEventListener('change', () => {
@@ -695,8 +717,26 @@
     localStorage.setItem('wordlink.nickname', name);
     return name;
   }
+  function setMyAvatar(value) {
+    state.avatar = value || '';
+    try { if (state.avatar) localStorage.setItem(AVATAR_KEY, state.avatar); else localStorage.removeItem(AVATAR_KEY); } catch { /* 저장 못 해도 이번 접속에는 적용 */ }
+    if (state.nickname) noteAvatars([{ name: state.nickname, avatar: state.avatar }]);
+  }
+  // 프로필 사진 고르기. onPick(값) 은 고른 뒤 호출된다. ('' = 기본 글자 사진)
+  function openAvatarPicker(onPick) {
+    const cell = (value, label) => `<button type="button" class="avatar-choice${state.avatar === value ? ' selected' : ''}" data-avatar="${escapeHtml(value)}" aria-pressed="${state.avatar === value}" aria-label="${escapeHtml(label)}">${value ? escapeHtml(value) : '<span class="avatar-choice-none">가</span>'}</button>`;
+    const node = openDialog(`
+      <h2 class="dialog-title">🖼 프로필 사진</h2>
+      <p class="dialog-note">다른 플레이어에게 보일 내 사진을 골라요.</p>
+      <div class="avatar-grid" role="group" aria-label="프로필 사진 목록">${cell('', '기본 (닉네임 첫 글자)')}${avatarChoices.map(value => cell(value, `사진 ${value}`)).join('')}</div>
+      <div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>닫기</button></div>`);
+    node.querySelectorAll('.avatar-choice').forEach(button => button.addEventListener('click', async () => {
+      closeDialog();
+      await onPick(button.dataset.avatar);
+    }));
+  }
   async function enterLobby(name, options = {}) {
-    const result = await request('lobby:enter', { name, playerId: playerId() });
+    const result = await request('lobby:enter', { name, playerId: playerId(), avatar: state.avatar });
     if (!result.ok) {
       if (!options.silent || result.code === 'NAME_TAKEN') showToast(result.message, 'error');
       if (result.code !== 'IN_ROOM') state.nickname = null;
@@ -704,7 +744,9 @@
       return false;
     }
     state.nickname = name;
+    setMyAvatar(result.avatar || '');
     state.hub.rooms = result.rooms;
+    noteAvatars(result.users.list);
     state.hub.users = result.users.list;
     state.hub.total = result.users.total;
     state.hub.chat = result.chat;
@@ -842,11 +884,19 @@
       <div class="hub-profile-main">${avatar(state.nickname)}<div><strong>${escapeHtml(state.nickname)}</strong><small>${known ? `${p.games}전 ${p.wins}승` : '로비에서 대기 중'}</small></div></div>
       ${level}
       <button id="hub-profile-open" class="secondary-button button-full" type="button">${known ? '마이페이지' : '내 기록'}</button>
+      <button id="hub-avatar" class="ghost-button button-full" type="button">프로필 사진 바꾸기</button>
       <button id="hub-rename" class="ghost-button button-full" type="button">닉네임 변경</button>`;
     if (body.dataset.sig === html) return;
     body.dataset.sig = html;
     body.innerHTML = html;
     $('#hub-profile-open').addEventListener('click', openMyPage);
+    $('#hub-avatar').addEventListener('click', () => openAvatarPicker(async value => {
+      const result = await request('profile:avatar', { avatar: value });
+      if (!result.ok) { showToast(result.message || '프로필 사진을 바꾸지 못했어요.', 'error'); return; }
+      setMyAvatar(result.avatar);
+      updateProfile(); updateUsers();
+      showToast('프로필 사진을 바꿨어요.', 'success');
+    }));
     $('#hub-rename').addEventListener('click', leaveLobby);
   }
   function chatLineHtml(message) {
@@ -975,6 +1025,7 @@
     const result = await request('lobby:refresh');
     if (!result.ok) return showToast(result.message, 'error');
     state.hub.rooms = result.rooms;
+    noteAvatars(result.users.list);
     state.hub.users = result.users.list;
     state.hub.total = result.users.total;
     updateRooms(); updateUsers(); updateProfile();
@@ -983,13 +1034,14 @@
   // ---------- 방 입장 · 만들기 ----------
   function enterRoom(result) {
     saveSession({ code: result.room.code, playerId: result.playerId, name: state.nickname });
+    noteAvatars(result.room.players);
     state.room = result.room;
     history.replaceState({}, '', location.pathname);
     render();
     showToast(`${result.room.number}번 방에 입장했어요.`, 'success');
   }
   async function joinByCode(code, password = '') {
-    const result = await request('room:join', { code, name: state.nickname, playerId: playerId(), password });
+    const result = await request('room:join', { code, name: state.nickname, playerId: playerId(), password, avatar: state.avatar });
     if (result.ok) return enterRoom(result);
     if (result.code === 'PASSWORD_REQUIRED' || result.code === 'PASSWORD_WRONG') {
       const typed = await askPassword(result.code === 'PASSWORD_WRONG' ? result.message : '');
@@ -999,7 +1051,7 @@
     showToast(result.message, 'error');
   }
   async function quickJoin() {
-    const result = await request('room:quick', { name: state.nickname, playerId: playerId() });
+    const result = await request('room:quick', { name: state.nickname, playerId: playerId(), avatar: state.avatar });
     if (result.ok) enterRoom(result); else showToast(result.message, 'error');
   }
   function openCodeDialog() {
@@ -1036,7 +1088,7 @@
           <div><label class="field-label" for="create-rounds">라운드 수 <small class="field-hint">(${MIN_ROUNDS}~${MAX_ROUNDS})</small></label><input id="create-rounds" class="text-input" type="number" inputmode="numeric" min="${MIN_ROUNDS}" max="${MAX_ROUNDS}" step="1" value="3"></div>
           <div><label class="field-label" for="create-total">라운드 총 시간</label><select id="create-total" class="select-input">${options(TOTAL_TIME_OPTIONS, 60, '초')}</select></div>
           <div><label class="field-label" for="create-turn">턴 제한 시간</label><select id="create-turn" class="select-input">${options([10, 15, 20, 30], 15, '초')}</select></div>
-          <div><label class="field-label" for="create-oneshot">한방 단어 <small class="field-hint">(이어 갈 단어가 없는 단어)</small></label><select id="create-oneshot" class="select-input"><option value="true" selected>허용</option><option value="false">금지</option></select></div>
+          <div><label class="check-row" for="create-oneshot"><input id="create-oneshot" type="checkbox" checked><span>한방 단어 허용 <small class="field-hint">(이어 갈 단어가 없는 단어)</small></span></label></div>
         </div>
         <div class="dialog-actions"><button type="button" class="ghost-button" data-cancel>취소</button><button id="create-submit" type="submit" class="primary-button">방 만들기 <span aria-hidden="true">↗</span></button></div>
       </form>`);
@@ -1048,14 +1100,14 @@
       if (rounds === null) { showToast(`라운드 수는 ${MIN_ROUNDS}~${MAX_ROUNDS} 사이의 정수로 입력해 주세요.`, 'error'); $('#create-rounds', node).focus(); return; }
       submit.disabled = true;
       const result = await request('room:create', {
-        name: state.nickname, playerId: playerId(),
+        name: state.nickname, playerId: playerId(), avatar: state.avatar,
         title: $('#create-title', node).value,
         password: $('#create-password', node).value,
         maxPlayers: Number($('#create-max', node).value),
         rounds,
         totalSeconds: Number($('#create-total', node).value),
         turnSeconds: Number($('#create-turn', node).value),
-        allowOneShot: $('#create-oneshot', node).value === 'true'
+        allowOneShot: $('#create-oneshot', node).checked
       });
       if (!result.ok) { showToast(result.message, 'error'); submit.disabled = false; return; }
       closeDialog();
@@ -1107,8 +1159,7 @@
         <p class="setting-note">${MIN_ROUNDS}~${MAX_ROUNDS}라운드 중 원하는 만큼 정할 수 있어요.</p>
       </div>
       <div class="setting-block">
-        <label class="field-label" for="setting-oneshot">한방 단어 <small class="field-hint">(이어 갈 단어가 없는 단어)</small></label>
-        <select id="setting-oneshot" class="select-input"><option value="true" ${room.settings.allowOneShot !== false ? 'selected' : ''}>허용</option><option value="false" ${room.settings.allowOneShot === false ? 'selected' : ''}>금지</option></select>
+        <label class="check-row" for="setting-oneshot"><input id="setting-oneshot" type="checkbox" ${room.settings.allowOneShot !== false ? 'checked' : ''}><span>한방 단어 허용 <small class="field-hint">(이어 갈 단어가 없는 단어)</small></span></label>
       </div>
       <div class="setting-block">
         <label class="field-label" for="setting-players">최대 인원</label>
@@ -1175,7 +1226,7 @@
       code: state.room.code, playerId: state.session.playerId,
       turnSeconds: Number($('#setting-time').value), maxPlayers: Number($('#setting-players').value),
       totalSeconds: Number($('#setting-total').value), rounds,
-      allowOneShot: $('#setting-oneshot').value === 'true',
+      allowOneShot: $('#setting-oneshot').checked,
       title: $('#setting-title').value, password: $('#setting-password').value, clearPassword: Boolean($('#setting-clear-pw')?.checked)
     });
     if (result.ok) state.roundsDraft = null;

@@ -1718,3 +1718,21 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .turn-plan-line { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 input.text-input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
 @media (max-width: 560px) { .game-top-info { flex-wrap: wrap; row-gap: 6px; } }
+
+/* 한방 단어 체크박스 */
+.check-row { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; font-weight: 800; }
+.check-row input[type="checkbox"] { flex: 0 0 auto; width: 20px; height: 20px; margin: 0; accent-color: #c46a00; cursor: pointer; }
+.check-row .field-hint { font-weight: 600; }
+
+/* 프로필 사진 */
+.avatar.has-pic { font-size: 20px; line-height: 1; font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
+.avatar.has-pic.small, .score-row .avatar.has-pic, .history-item .avatar.has-pic { font-size: 16px; }
+.hub-profile-main .avatar.has-pic { font-size: 26px; }
+.home-avatar-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.home-avatar-row .avatar { width: 46px; height: 46px; font-size: 26px; }
+.avatar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 8px; margin-top: 12px; }
+.avatar-choice { aspect-ratio: 1; display: grid; place-items: center; border: 2px solid transparent; border-radius: 14px; background: #fff3d6; font-size: 28px; line-height: 1; cursor: pointer; font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
+.avatar-choice:hover { background: #ffe9b8; }
+.avatar-choice.selected { border-color: #c46a00; background: #ffe2a0; }
+.avatar-choice:focus-visible { outline: 3px solid rgba(196,106,0,.4); outline-offset: 1px; }
+.avatar-choice-none { font-family: 'Jua', sans-serif; font-size: 20px; color: #3b2a14; }

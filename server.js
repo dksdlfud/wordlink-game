@@ -26,6 +26,12 @@ const rawWords = JSON.parse(fs.readFileSync(path.join(ROOT, 'words.json'), 'utf8
 const dictionary = new Set(rawWords.map(normalizeWord));
 const missionPool = buildMissionPool(dictionary);
 const startIndex = buildStartIndex(dictionary); // 한방 단어 판정용 (첫 글자별 단어 수)
+// 프로필 사진: 직접 올리지 않고 서버가 정한 목록에서만 고른다. (목록 밖의 값은 빈 값 = 기본 글자 아바타)
+const AVATARS = ['🐶','🐱','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐦','🦉','🦄','🐙','🐳','🐢','🦖','🍀','⭐'];
+function safeAvatar(value) {
+  const avatar = String(value ?? '');
+  return AVATARS.includes(avatar) ? avatar : '';
+}
 // 방 설정의 true/false 값을 안전하게 읽는다. 값이 없으면 fallback.
 function readBool(value, fallback) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -114,12 +120,20 @@ function syncProfile(socket, name) {
   return profile ? profile.level : null;
 }
 // 클라이언트에 내보내는 내 프로필. 계정 키는 포함하지 않는다.
+// 로그인한 사람의 저장된 사진. 이번에 고른 값(requested)이 있으면 그것을 저장하고 쓴다.
+function resolveAvatar(socket, requested) {
+  const login = socket.data.auth;
+  const picked = safeAvatar(requested);
+  if (!login) return picked;
+  if (picked) { store.touch(login.statsKey, { avatar: picked }); return picked; }
+  return store.get(login.statsKey)?.avatar || '';
+}
 function publicProfile(key) {
   const profile = store.get(key);
   if (!profile) return null;
   const { level, levelInfo: info } = profile;
   return {
-    name: profile.name, level, title: titleFor(level), tier: tierFor(level),
+    name: profile.name, avatar: profile.avatar || '', level, title: titleFor(level), tier: tierFor(level),
     xp: profile.xp, xpInto: info.into, xpNeed: info.need, pct: info.pct, max: info.max,
     rank: store.rankOf(key), createdAt: profile.createdAt,
     games: profile.games, wins: profile.wins, roundWins: profile.roundWins,
@@ -189,6 +203,7 @@ function roomSnapshot(room) {
     players: orderedPlayers(room).map(player => ({
       id: player.id,
       name: player.name,
+      avatar: player.avatar || '',
       online: player.online,
       ready: player.ready,
       score: player.score,
@@ -262,7 +277,7 @@ function userList() {
     const code = io.sockets.sockets.get(socketId)?.data.roomCode;
     const room = code ? rooms.get(code) : null;
     const where = room ? (room.state === 'lobby' ? 'waiting' : 'playing') : 'lobby';
-    const item = { name: entry.name, level: entry.level ?? null, where, roomNumber: room ? room.number : null };
+    const item = { name: entry.name, avatar: entry.avatar || '', level: entry.level ?? null, where, roomNumber: room ? room.number : null };
     const prev = byPlayer.get(entry.playerId);
     if (!prev || (prev.where === 'lobby' && where !== 'lobby')) byPlayer.set(entry.playerId, item);
   }
@@ -544,14 +559,14 @@ function attachPlayer(room, player, socket) {
   socket.data.playerId = player.id;
   socket.data.roomCode = room.code;
   socket.leave(LOBBY_CHANNEL);
-  presence.set(socket.id, { playerId: player.id, name: player.name, level: player.level ?? null });
+  presence.set(socket.id, { playerId: player.id, name: player.name, avatar: player.avatar || '', level: player.level ?? null });
   if (room.idleTimer) { clearTimeout(room.idleTimer); room.idleTimer = null; }
   socket.join(roomChannel(room.code));
   broadcast(room);
 }
 
 // 방 참가 공통 처리. 방 코드 입장 · 목록에서 클릭 · 빠른 입장이 모두 이 함수를 쓴다.
-function performJoin(socket, room, { name, playerId, password }) {
+function performJoin(socket, room, { name, playerId, password, avatar }) {
   const existing = room.players.get(playerId);
   if (existing) { // 이미 이 방의 구성원이면(재접속) 비밀번호 없이 복귀
     if (existing.socketId && existing.socketId !== socket.id) {
@@ -559,6 +574,7 @@ function performJoin(socket, room, { name, playerId, password }) {
       if (oldSocket) oldSocket.leave(roomChannel(room.code));
     }
     existing.name = name;
+    existing.avatar = resolveAvatar(socket, avatar) || existing.avatar || '';
     existing.statsKey = socket.data.auth?.statsKey || null;
     existing.level = syncProfile(socket, name);
     attachPlayer(room, existing, socket);
@@ -577,7 +593,7 @@ function performJoin(socket, room, { name, playerId, password }) {
     }
     socket.data.pwFails = 0;
   }
-  const player = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0, statsKey: socket.data.auth?.statsKey || null, level: syncProfile(socket, name) };
+  const player = { id: playerId, name, avatar: resolveAvatar(socket, avatar), socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0, statsKey: socket.data.auth?.statsKey || null, level: syncProfile(socket, name) };
   room.players.set(playerId, player);
   room.playerOrder.push(playerId);
   attachPlayer(room, player, socket);
@@ -593,7 +609,7 @@ function findRoomPlayer(playerId, code) {
 io.on('connection', socket => {
   const login = auth.sessionFromCookieHeader(socket.handshake.headers.cookie);
   if (login) socket.data.auth = { provider: login.provider, playerId: login.playerId, statsKey: login.statsKey };
-  socket.emit('server:hello', { dictionarySize: dictionary.size, version: VERSION });
+  socket.emit('server:hello', { dictionarySize: dictionary.size, version: VERSION, avatars: AVATARS });
 
   // ---------- 로비 ----------
   socket.on('lobby:enter', (payload = {}, callback) => {
@@ -608,10 +624,10 @@ io.on('connection', socket => {
         return sendAck(callback, { ok: false, code: 'NAME_TAKEN', message: '지금 접속 중인 사람이 쓰는 닉네임이에요. 다른 닉네임을 사용해 주세요.' });
       }
     }
-    presence.set(socket.id, { playerId, name, level: syncProfile(socket, name) });
+    presence.set(socket.id, { playerId, name, avatar: resolveAvatar(socket, payload.avatar), level: syncProfile(socket, name) });
     socket.join(LOBBY_CHANNEL);
     scheduleLobbyBroadcast();
-    sendAck(callback, { ok: true, playerId, rooms: roomList(), users: userList(), chat: lobbyChat.slice(-LOBBY_CHAT_LIMIT) });
+    sendAck(callback, { ok: true, playerId, avatar: presence.get(socket.id).avatar, rooms: roomList(), users: userList(), chat: lobbyChat.slice(-LOBBY_CHAT_LIMIT) });
   });
 
   socket.on('lobby:leave', (payload = {}, callback) => {
@@ -649,6 +665,18 @@ io.on('connection', socket => {
     if (!store.has(login.statsKey)) store.touch(login.statsKey, { provider: login.provider });
     sendAck(callback, { ok: true, guest: false, profile: publicProfile(login.statsKey) });
   });
+  // 프로필 사진 바꾸기 (로비에서). 로그인한 사람은 계정에 저장돼 다음 접속에도 유지된다.
+  socket.on('profile:avatar', (payload = {}, callback) => {
+    const entry = presence.get(socket.id);
+    if (!entry) return sendAck(callback, { ok: false, message: '로비에 입장해 주세요.' });
+    const avatar = safeAvatar(payload.avatar);
+    if (payload.avatar && !avatar) return sendAck(callback, { ok: false, message: '고를 수 없는 사진이에요.' });
+    entry.avatar = avatar;
+    const login = socket.data.auth;
+    if (login) store.touch(login.statsKey, { avatar, clearAvatar: !avatar });
+    scheduleLobbyBroadcast();
+    sendAck(callback, { ok: true, avatar });
+  });
   socket.on('ranking:top', (payload = {}, callback) => {
     const now = Date.now();
     if (now - (socket.data.lastRankingAt || 0) < RANKING_COOLDOWN_MS) return sendAck(callback, { ok: false, throttled: true, message: '잠시 후 다시 확인해 주세요.' });
@@ -681,7 +709,7 @@ io.on('connection', socket => {
       const title = safeTitle(payload.title, `${name}님의 방`);
       const playerId = resolvePlayerId(socket, payload.playerId);
       const code = createCode();
-      const host = { id: playerId, name, socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0, statsKey: socket.data.auth?.statsKey || null, level: syncProfile(socket, name) };
+      const host = { id: playerId, name, avatar: resolveAvatar(socket, payload.avatar), socketId: socket.id, online: true, ready: false, score: 0, roundScore: 0, roundWins: 0, eliminated: false, left: false, lastReactAt: 0, statsKey: socket.data.auth?.statsKey || null, level: syncProfile(socket, name) };
       const room = createRoomObject(code, host, { title, password, settings });
       rooms.set(code, room);
       attachPlayer(room, host, socket);
@@ -700,7 +728,7 @@ io.on('connection', socket => {
     const room = rooms.get(code);
     if (!room) return sendAck(callback, { ok: false, code: 'NOT_FOUND', message: '방을 찾을 수 없어요. 이미 사라졌거나 코드가 달라요.' });
     const password = String(payload.password ?? '').trim().slice(0, 8);
-    sendAck(callback, performJoin(socket, room, { name, playerId: resolvePlayerId(socket, payload.playerId), password }));
+    sendAck(callback, performJoin(socket, room, { name, playerId: resolvePlayerId(socket, payload.playerId), password, avatar: payload.avatar }));
   });
 
   // 빠른 입장: 잠기지 않았고 자리가 있는 대기 중인 방 중 사람이 가장 많은 방으로 들어간다.
@@ -713,7 +741,7 @@ io.on('connection', socket => {
       .sort((a, b) => livePlayers(b).length - livePlayers(a).length || a.number - b.number);
     const room = candidates[0];
     if (!room) return sendAck(callback, { ok: false, code: 'NO_ROOM', message: '지금 바로 들어갈 수 있는 방이 없어요. 새 방을 만들어 보세요!' });
-    sendAck(callback, performJoin(socket, room, { name, playerId: resolvePlayerId(socket, payload.playerId), password: '' }));
+    sendAck(callback, performJoin(socket, room, { name, playerId: resolvePlayerId(socket, payload.playerId), password: '', avatar: payload.avatar }));
   });
 
   socket.on('room:restore', (payload = {}, callback) => {
